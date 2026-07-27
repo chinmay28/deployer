@@ -14,6 +14,11 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
+// SelfManager is the slice of selfhost the API needs.
+type SelfManager interface {
+	MachineID() string
+}
+
 // Server holds the dependencies the handlers need.
 type Server struct {
 	DB     *store.DB
@@ -22,6 +27,12 @@ type Server struct {
 	Runner *deploy.Runner
 	Health *deploy.Checker
 	Log    *slog.Logger
+	// Self identifies the machine Deployer runs on; nil disables self-update.
+	Self SelfManager
+	// Version is the build this binary was made from.
+	Version string
+	// SelfRef is the git ref a self-update builds from by default.
+	SelfRef string
 	// Auth is nil when Deployer runs without a PIN.
 	Auth *PinAuth
 }
@@ -62,6 +73,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/deployments/{id}", s.handleGetDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/stream", s.handleDeploymentStream)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", s.handleCancelDeployment)
+
+	mux.HandleFunc("GET /api/self", s.handleGetSelf)
+	mux.HandleFunc("POST /api/self/update", s.handleSelfUpdate)
 
 	mux.HandleFunc("GET /api/overview", s.handleOverview)
 

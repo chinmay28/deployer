@@ -30,6 +30,11 @@ export function HostBadge({ status }: { status: HostStatus }) {
   }
 }
 
+/** HomeBadge marks the machine Deployer itself is running on. */
+export function HomeBadge() {
+  return <Badge tone="accent">Home</Badge>
+}
+
 export function HealthBadge({ status }: { status: HealthStatus }) {
   switch (status) {
     case 'passing':

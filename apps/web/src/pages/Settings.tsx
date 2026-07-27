@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
-import { Banner, Card, Copyable, SectionTitle, Sheet, useLoader } from '../components/ui'
+import { HomeBadge, HostBadge } from '../components/status'
+import { Banner, Card, Copyable, Field, SectionTitle, Sheet, useLoader } from '../components/ui'
+import type { SelfInfo } from '../types'
 
 export default function Settings() {
   const { data, error, reload } = useLoader(() => api.sshKey(), [])
+  // Refreshed on a timer so a running update surfaces without a manual reload.
+  const { data: self, reload: reloadSelf } = useLoader(() => api.self(), [], 5000)
   const [confirmRotate, setConfirmRotate] = useState(false)
   const [rotating, setRotating] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -27,6 +32,9 @@ export default function Settings() {
     <Page title="Settings">
       {error && <Banner tone="bad">{error}</Banner>}
       {notice && <Banner tone="warn">{notice}</Banner>}
+
+      <SectionTitle>This machine</SectionTitle>
+      {self && <SelfCard info={self} onStarted={reloadSelf} />}
 
       <SectionTitle>Adding a host</SectionTitle>
       <p className="sub" style={{ margin: '0 4px 12px' }}>
@@ -83,6 +91,12 @@ export default function Settings() {
           Tailscale network — don't expose it to the internet. Its database also holds the private
           key, so treat backups of it as a secret.
         </p>
+        {self && (
+          <div className="row between sub" style={{ marginTop: 10 }}>
+            <span>Version</span>
+            <span className="mono">{self.version}</span>
+          </div>
+        )}
       </Card>
 
       {confirmRotate && (
@@ -102,5 +116,121 @@ export default function Settings() {
         </Sheet>
       )}
     </Page>
+  )
+}
+
+/**
+ * SelfCard is where Deployer updates itself: it shows the machine it runs on,
+ * whether an update can start, and the version to build.
+ */
+function SelfCard({ info, onStarted }: { info: SelfInfo; onStarted: () => void }) {
+  const navigate = useNavigate()
+  const [confirming, setConfirming] = useState(false)
+  const [ref, setRef] = useState(info.ref)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Follow the server's suggestion until the user types their own.
+  useEffect(() => setRef(info.ref), [info.ref])
+
+  const start = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const deployment = await api.selfUpdate(ref.trim())
+      onStarted()
+      navigate(`/deployments/${deployment.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+
+  if (!info.host) {
+    return (
+      <Card>
+        <p className="sub" style={{ marginTop: 0 }}>
+          Deployer hasn't registered the machine it runs on, so it can't update itself from here.
+          Add it as a host with the address <span className="mono">127.0.0.1</span>.
+        </p>
+        <Link to="/hosts/new">
+          <button className="secondary block">Add this machine</button>
+        </Link>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <div className="row between">
+        <div className="grow">
+          <div className="title">{info.host.name}</div>
+          <div className="sub">
+            {info.host.username}@{info.host.address} · version <span className="mono">{info.version}</span>
+          </div>
+        </div>
+        <div className="row" style={{ gap: 6 }}>
+          <HomeBadge />
+          <HostBadge status={info.host.status} />
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 12 }}>
+          <Banner tone="bad">{error}</Banner>
+        </div>
+      )}
+
+      {info.runningDeploymentId ? (
+        <div className="actions">
+          <button className="primary" onClick={() => navigate(`/deployments/${info.runningDeploymentId}`)}>
+            Watch the update
+          </button>
+        </div>
+      ) : (
+        <>
+          {!info.ready && info.blocked && (
+            <div style={{ marginTop: 12 }}>
+              <Banner tone="warn">{info.blocked}</Banner>
+            </div>
+          )}
+          <div className="actions">
+            <button className="primary" onClick={() => setConfirming(true)} disabled={!info.ready}>
+              Update Deployer
+            </button>
+          </div>
+        </>
+      )}
+
+      {confirming && (
+        <Sheet
+          title="Update Deployer"
+          subtitle={`Rebuilds and restarts Deployer on ${info.host.name}.`}
+          onClose={() => setConfirming(false)}
+        >
+          <Field label="Version" help="Branch, tag or commit to build from.">
+            <input
+              value={ref}
+              onChange={(e) => setRef(e.target.value)}
+              placeholder="main"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </Field>
+          <Banner tone="warn">
+            Deployer restarts itself part-way through. The update keeps running on the host and this
+            page picks the log back up once it is available again.
+          </Banner>
+          <div className="actions">
+            <button className="secondary" onClick={() => setConfirming(false)} disabled={busy}>
+              Cancel
+            </button>
+            <button className="primary" onClick={start} disabled={busy || ref.trim() === ''}>
+              {busy ? 'Starting…' : 'Update'}
+            </button>
+          </div>
+        </Sheet>
+      )}
+    </Card>
   )
 }

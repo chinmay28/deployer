@@ -57,7 +57,7 @@ func newEnv(t *testing.T) *env {
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := hosts.NewService(db, id)
+	svc := hosts.NewService(db, id, nil)
 	checker := NewChecker(db, svc, log)
 	return &env{
 		db: db, svc: svc, checker: checker, host: host,
@@ -447,3 +447,6 @@ func TestShutdownStopsRunningDeployments(t *testing.T) {
 		t.Error("shutdown left a deployment recorded as running")
 	}
 }
+
+// discardLogger keeps test output readable.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

@@ -36,6 +36,8 @@ export interface Host {
   arch: string
   sudoOk: boolean
   createdAt: string
+  /** True for the machine Deployer itself runs on. */
+  isSelf: boolean
   latest: Sample | null
 }
 
@@ -70,6 +72,8 @@ export interface App {
   healthType: HealthType
   healthTarget: string
   createdAt: string
+  /** True for the app that installs Deployer itself. */
+  selfUpdate: boolean
 }
 
 export type DeploymentStatus = 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
@@ -113,6 +117,17 @@ export interface Overview {
   hosts: Host[]
   installations: Installation[]
   recentDeployments: Deployment[]
+}
+
+export interface SelfInfo {
+  version: string
+  machineId: string
+  host: Host | null
+  app: App | null
+  ref: string
+  runningDeploymentId: number | null
+  ready: boolean
+  blocked?: string
 }
 
 export interface SSHKeyInfo {

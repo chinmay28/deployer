@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os/user"
@@ -332,5 +333,30 @@ func TestCancelDeploymentThroughAPI(t *testing.T) {
 	}
 	if w := do(t, h, "POST", fmt.Sprintf("/api/deployments/%d/cancel", dep.ID), ""); w.Code != http.StatusConflict {
 		t.Errorf("cancel of a finished deployment = %d, want 409", w.Code)
+	}
+}
+
+// A deployment that is handed over mid-restart must not end the stream with a
+// terminal-looking status, or the page waits forever for a verdict that has
+// already been sent.
+func TestStreamOfAHandedOverDeploymentDoesNotLookFinished(t *testing.T) {
+	s, h := testServer(t, "")
+	host, app := registerSelf(t, s, true)
+
+	// A detached deployment left running by a previous process.
+	dep, err := s.DB.CreateDeployment(context.Background(), &store.Deployment{
+		AppID: app.ID, HostID: host.ID, Command: "x", DetachedLog: "/tmp/handover.log",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(t, h, "GET", fmt.Sprintf("/api/deployments/%d/stream", dep.ID), "")
+	body := w.Body.String()
+	if strings.Contains(body, "event: status") {
+		t.Errorf("stream reported a verdict for a deployment still running:\n%s", body)
+	}
+	if !strings.Contains(body, "event: handover") {
+		t.Errorf("stream should say it was handed over:\n%s", body)
 	}
 }

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
-import { DeploymentBadge, HostBadge } from '../components/status'
+import { DeploymentBadge, HomeBadge, HostBadge } from '../components/status'
 import {
   Badge,
   Banner,
@@ -83,8 +83,18 @@ export default function HostDetail() {
                   {host.os || 'Not yet identified'} · seen {ago(host.lastSeenAt)}
                 </div>
               </div>
-              <HostBadge status={host.status} />
+              <div className="row" style={{ gap: 6 }}>
+                {host.isSelf && <HomeBadge />}
+                <HostBadge status={host.status} />
+              </div>
             </div>
+
+            {host.isSelf && (
+              <div className="sub" style={{ marginTop: 10 }}>
+                Deployer itself runs on this machine. It still connects over SSH, so it needs its
+                own key authorized here like any other host.
+              </div>
+            )}
 
             {host.status !== 'online' && host.lastError && (
               <div style={{ marginTop: 12 }}>
@@ -194,6 +204,7 @@ export default function HostDetail() {
             <p className="sub" style={{ marginTop: 0 }}>
               Removing a host deletes its monitoring history from Deployer. Nothing on the machine
               itself is changed.
+              {host.isSelf && ' Removing this one also turns off updating Deployer from the UI.'}
             </p>
             <button className="danger block" onClick={() => setConfirmDelete(true)}>
               Remove host
