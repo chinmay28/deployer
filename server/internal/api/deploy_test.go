@@ -211,6 +211,10 @@ func TestDeployEndToEndThroughAPI(t *testing.T) {
 	if !strings.Contains(dep.Log, "deployed to 127.0.0.1") {
 		t.Errorf("log missing output:\n%s", dep.Log)
 	}
+	// The detail view is a page of its own, so it needs the names too.
+	if dep.AppName != "demo" || dep.HostName != "localhost" {
+		t.Errorf("deployment detail = app %q, host %q; want both named", dep.AppName, dep.HostName)
+	}
 
 	// The app now shows up as installed, with the host and app named for the UI.
 	installs := decode[[]store.Installation](t, do(t, h, "GET", "/api/installations", ""))

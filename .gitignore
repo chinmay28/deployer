@@ -3,9 +3,10 @@ bin/
 node_modules/
 apps/web/dist/
 
-# Vite writes fingerprinted assets into the embed directory at build time;
-# only the placeholder index.html is tracked.
-server/internal/web/dist/assets/
+# Vite writes the PWA into the Go embed directory at build time. Nothing there
+# is source: `make server` drops in a placeholder index.html when the web app
+# hasn't been built, so the binary always compiles.
+server/internal/web/dist/
 
 # Runtime data (SQLite database holds the SSH private key — never commit it)
 data/

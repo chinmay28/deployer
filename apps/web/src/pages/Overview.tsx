@@ -1,0 +1,127 @@
+import { Link } from 'react-router-dom'
+import { api } from '../api'
+import { Page } from '../components/Layout'
+import { DeploymentBadge, HealthBadge, HostBadge } from '../components/status'
+import { Banner, Empty, Meter, SectionTitle, useLoader } from '../components/ui'
+import { ago, bytes, percent, time } from '../lib/format'
+import type { Host } from '../types'
+
+/** The dashboard: everything in one request, refreshed while it is open. */
+export default function Overview() {
+  const { data, error, loading } = useLoader(() => api.overview(), [], 5000)
+
+  return (
+    <Page title="Deployer">
+      {error && <Banner tone="bad">{error}</Banner>}
+      {!data && loading && <div className="empty">Loading…</div>}
+
+      {data && (
+        <>
+          <SectionTitle>Hosts</SectionTitle>
+          {data.hosts.length === 0 ? (
+            <Empty
+              message="No hosts yet. Add the machine you want to deploy to."
+              action={
+                <Link to="/hosts/new">
+                  <button className="primary">Add a host</button>
+                </Link>
+              }
+            />
+          ) : (
+            data.hosts.map((host) => <HostSummary key={host.id} host={host} />)
+          )}
+
+          <SectionTitle>Deployed apps</SectionTitle>
+          {data.installations.length === 0 ? (
+            <Empty
+              message="Nothing deployed yet. Add an app, then deploy it to a host."
+              action={
+                <Link to="/apps/new">
+                  <button className="primary">Add an app</button>
+                </Link>
+              }
+            />
+          ) : (
+            data.installations.map((install) => (
+              <Link key={install.id} className="card" to={`/apps/${install.appId}`}>
+                <div className="row between">
+                  <div className="grow">
+                    <div className="title">{install.appName}</div>
+                    <div className="sub">
+                      on {install.hostName} · updated {ago(install.updatedAt)}
+                    </div>
+                  </div>
+                  <HealthBadge status={install.healthStatus} />
+                </div>
+              </Link>
+            ))
+          )}
+
+          {data.recentDeployments.length > 0 && (
+            <>
+              <SectionTitle>Recent deployments</SectionTitle>
+              {data.recentDeployments.map((deployment) => (
+                <Link key={deployment.id} className="card" to={`/deployments/${deployment.id}`}>
+                  <div className="row between">
+                    <div className="grow">
+                      <div className="title">
+                        {deployment.appName} → {deployment.hostName}
+                      </div>
+                      <div className="sub">{time(deployment.startedAt)}</div>
+                    </div>
+                    <DeploymentBadge status={deployment.status} />
+                  </div>
+                </Link>
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </Page>
+  )
+}
+
+function HostSummary({ host }: { host: Host }) {
+  const sample = host.latest
+  const disk = sample?.disks?.[0]
+  return (
+    <Link className="card" to={`/hosts/${host.id}`}>
+      <div className="row between">
+        <div className="grow">
+          <div className="title">{host.name}</div>
+          <div className="sub">
+            {host.address}
+            {sample ? ` · ${ago(sample.takenAt)}` : ''}
+          </div>
+        </div>
+        <HostBadge status={host.status} />
+      </div>
+
+      {sample ? (
+        <div className="meters">
+          <Meter label="CPU" value={sample.cpuPct} display={`${Math.round(sample.cpuPct)}%`} />
+          <Meter
+            label="Memory"
+            used={sample.memUsed}
+            total={sample.memTotal}
+            display={`${Math.round(percent(sample.memUsed, sample.memTotal))}%`}
+          />
+          {disk ? (
+            <Meter
+              label={`Disk ${disk.mount}`}
+              used={disk.usedBytes}
+              total={disk.totalBytes}
+              display={bytes(disk.totalBytes - disk.usedBytes) + ' free'}
+            />
+          ) : (
+            <Meter label="Disk" value={0} display="—" />
+          )}
+        </div>
+      ) : (
+        <div className="sub" style={{ marginTop: 10 }}>
+          {host.lastError ? host.lastError : 'Waiting for the first reading…'}
+        </div>
+      )}
+    </Link>
+  )
+}
