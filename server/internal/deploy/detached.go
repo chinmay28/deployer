@@ -79,8 +79,18 @@ func lastNonEmptyLine(s string) string {
 }
 
 // stripExitMarker removes the bookkeeping line before the log is shown.
+//
+// It hides the marker as soon as its prefix appears at the start of the last
+// line, without waiting for the exit status to follow it. A read that lands
+// mid-printf sees `__deployer_exit__:` with no digits yet, and that must not
+// reach the log — once written it would never be taken back, because the
+// follower only ever appends what is new.
+//
+// Requiring it to be the *last* line is what keeps this from swallowing real
+// output: a command that happens to print the marker mid-stream keeps
+// everything after it, and parseExitMarker still refuses to call it finished.
 func stripExitMarker(log string) string {
-	if _, done := parseExitMarker(log); !done {
+	if !strings.HasPrefix(lastNonEmptyLine(log), exitMarker) {
 		return log
 	}
 	idx := strings.LastIndex(log, exitMarker)

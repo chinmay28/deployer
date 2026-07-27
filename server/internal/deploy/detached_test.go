@@ -37,14 +37,26 @@ func TestParseExitMarker(t *testing.T) {
 	}
 }
 
-func TestStripExitMarkerKeepsOutput(t *testing.T) {
-	log := "installing\ndone\n\n" + exitMarker + "0\n"
-	got := stripExitMarker(log)
-	if strings.Contains(got, exitMarker) {
-		t.Errorf("marker survived: %q", got)
+func TestStripExitMarker(t *testing.T) {
+	cases := []struct {
+		name, log, want string
+	}{
+		{"complete marker", "installing\ndone\n\n" + exitMarker + "0\n", "installing\ndone"},
+		// A read landing mid-printf sees the prefix with no status yet. It has
+		// to be hidden anyway: the follower only appends, so anything shown
+		// once can never be taken back.
+		{"half-written marker", "installing\ndone\n\n" + exitMarker, "installing\ndone"},
+		{"no marker", "installing\ndone\n", "installing\ndone\n"},
+		// Output that merely looks like a marker, with more after it, is real
+		// output and must survive.
+		{"marker mid-stream", "a\n" + exitMarker + "0\nb\n", "a\n" + exitMarker + "0\nb\n"},
 	}
-	if !strings.Contains(got, "installing") || !strings.Contains(got, "done") {
-		t.Errorf("output lost: %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripExitMarker(tc.log); got != tc.want {
+				t.Errorf("stripExitMarker(%q) = %q, want %q", tc.log, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -67,28 +79,39 @@ func TestDetachedCommandOutlivesItsSSHSession(t *testing.T) {
 	// Drop the connection the way a restart would.
 	client.Close()
 
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(marker); err == nil {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	// Wait for the exit marker, not for the touched file: the command writes
+	// that file before it finishes, so watching it races the rest of the
+	// output. The marker is the only signal that means "done" — which is
+	// exactly why the follower waits for it too.
+	log := waitForExitMarker(t, logPath)
+
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("the detached command died with its SSH session")
 	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read detached log: %v", err)
-	}
-	log := string(data)
 	if !strings.Contains(log, "finished") {
 		t.Errorf("log missing output:\n%s", log)
 	}
 	if code, done := parseExitMarker(log); !done || code != 0 {
 		t.Errorf("exit marker = (%d, %v), want (0, true):\n%s", code, done, log)
 	}
+}
+
+// waitForExitMarker polls a detached log until the command records its status.
+func waitForExitMarker(t *testing.T, logPath string) string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var log string
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(logPath); err == nil {
+			log = string(data)
+			if _, done := parseExitMarker(log); done {
+				return log
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("no exit status recorded within the timeout; log so far:\n%s", log)
+	return log
 }
 
 // selfHostEnv marks the test host as the machine Deployer runs on, which is
