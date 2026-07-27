@@ -51,6 +51,43 @@ var migrations = []string{
 		disks      TEXT NOT NULL DEFAULT '[]'
 	)`,
 	`CREATE INDEX idx_metric_samples_host_time ON metric_samples(host_id, taken_at)`,
+	`CREATE TABLE apps (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		name            TEXT NOT NULL UNIQUE,
+		description     TEXT NOT NULL DEFAULT '',
+		install_command TEXT NOT NULL,
+		params          TEXT NOT NULL DEFAULT '[]',
+		health_type     TEXT NOT NULL DEFAULT 'none',
+		health_target   TEXT NOT NULL DEFAULT '',
+		created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE TABLE deployments (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		host_id     INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+		command     TEXT NOT NULL,
+		params      TEXT NOT NULL DEFAULT '{}',
+		status      TEXT NOT NULL,
+		exit_code   INTEGER,
+		error       TEXT NOT NULL DEFAULT '',
+		log         TEXT NOT NULL DEFAULT '',
+		started_at  TEXT NOT NULL,
+		finished_at TEXT
+	)`,
+	`CREATE INDEX idx_deployments_app_host ON deployments(app_id, host_id, started_at)`,
+	`CREATE TABLE installations (
+		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		host_id            INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+		params             TEXT NOT NULL DEFAULT '{}',
+		last_deployment_id INTEGER REFERENCES deployments(id) ON DELETE SET NULL,
+		health_status      TEXT NOT NULL DEFAULT 'unknown',
+		health_detail      TEXT NOT NULL DEFAULT '',
+		health_checked_at  TEXT,
+		installed_at       TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(app_id, host_id)
+	)`,
 }
 
 // DB wraps the SQLite handle.

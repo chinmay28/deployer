@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hosts"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
@@ -18,6 +19,8 @@ type Server struct {
 	DB     *store.DB
 	Hosts  *hosts.Service
 	Poller *hosts.Poller
+	Runner *deploy.Runner
+	Health *deploy.Checker
 	Log    *slog.Logger
 	// Auth is nil when Deployer runs without a PIN.
 	Auth *PinAuth
@@ -42,6 +45,26 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/test", s.handleTestHost)
 	mux.HandleFunc("GET /api/hosts/{id}/metrics", s.handleHostMetrics)
 
+	mux.HandleFunc("GET /api/apps", s.handleListApps)
+	mux.HandleFunc("POST /api/apps", s.handleCreateApp)
+	mux.HandleFunc("GET /api/apps/{id}", s.handleGetApp)
+	mux.HandleFunc("PATCH /api/apps/{id}", s.handleUpdateApp)
+	mux.HandleFunc("DELETE /api/apps/{id}", s.handleDeleteApp)
+	mux.HandleFunc("POST /api/apps/{id}/deploy", s.handleDeployApp)
+
+	mux.HandleFunc("GET /api/installations", s.handleListInstallations)
+	mux.HandleFunc("GET /api/installations/{id}", s.handleGetInstallation)
+	mux.HandleFunc("DELETE /api/installations/{id}", s.handleForgetInstallation)
+	mux.HandleFunc("POST /api/installations/{id}/check", s.handleCheckInstallation)
+	mux.HandleFunc("POST /api/installations/{id}/redeploy", s.handleRedeploy)
+
+	mux.HandleFunc("GET /api/deployments", s.handleListDeployments)
+	mux.HandleFunc("GET /api/deployments/{id}", s.handleGetDeployment)
+	mux.HandleFunc("GET /api/deployments/{id}/stream", s.handleDeploymentStream)
+	mux.HandleFunc("POST /api/deployments/{id}/cancel", s.handleCancelDeployment)
+
+	mux.HandleFunc("GET /api/overview", s.handleOverview)
+
 	return mux
 }
 
@@ -63,6 +86,16 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	}
 }
 
+// mustJSON encodes a value that is known to be encodable, for embedding in a
+// server-sent event.
+func mustJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return `{}`
+	}
+	return string(b)
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -78,7 +111,7 @@ func (s *Server) writeStoreError(w http.ResponseWriter, err error, action string
 		return
 	}
 	if isUniqueViolation(err) {
-		writeError(w, http.StatusConflict, "a host with that name already exists")
+		writeError(w, http.StatusConflict, "that name is already taken")
 		return
 	}
 	s.Log.Error("api: "+action, "err", err)

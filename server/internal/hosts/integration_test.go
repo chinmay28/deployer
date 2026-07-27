@@ -3,10 +3,6 @@ package hosts
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
-	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -15,110 +11,15 @@ import (
 
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
+	"github.com/chinmay28/deployer/server/internal/testutil"
 )
 
 // These tests drive the real SSH path against a throwaway sshd on localhost:
 // key auth, host-key pinning, and the /proc probe against a live kernel. They
 // skip where sshd is unavailable rather than silently passing.
-func requireSSHD(t *testing.T) {
-	t.Helper()
-	for _, bin := range []string{"/usr/sbin/sshd", "ssh-keygen"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			if _, statErr := os.Stat(bin); statErr != nil {
-				t.Skipf("%s not available: %v", bin, err)
-			}
-		}
-	}
-	if os.Geteuid() != 0 {
-		t.Skip("sshd test server needs root")
-	}
-}
-
-// startSSHD boots an sshd that accepts only the given authorized key and
-// returns the port it listens on.
-func startSSHD(t *testing.T, authorizedKey string) int {
-	t.Helper()
-	dir := t.TempDir()
-	// sshd rejects world-readable key material regardless of StrictModes.
-	if err := os.Chmod(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	hostKey := filepath.Join(dir, "host_ed25519")
-	kg := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", hostKey)
-	if out, err := kg.CombinedOutput(); err != nil {
-		t.Fatalf("ssh-keygen: %v: %s", err, out)
-	}
-
-	authFile := filepath.Join(dir, "authorized_keys")
-	if err := os.WriteFile(authFile, []byte(authorizedKey+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	port := freePort(t)
-	cfg := filepath.Join(dir, "sshd_config")
-	conf := fmt.Sprintf(`Port %d
-ListenAddress 127.0.0.1
-HostKey %s
-PidFile %s
-AuthorizedKeysFile %s
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PermitRootLogin prohibit-password
-StrictModes no
-UsePAM no
-PrintMotd no
-LogLevel ERROR
-`, port, hostKey, filepath.Join(dir, "sshd.pid"), authFile)
-	if err := os.WriteFile(cfg, []byte(conf), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// sshd refuses to start without its privilege separation directory.
-	if err := os.MkdirAll("/run/sshd", 0o755); err != nil {
-		t.Skipf("cannot create sshd privilege separation directory: %v", err)
-	}
-
-	cmd := exec.Command("/usr/sbin/sshd", "-D", "-f", cfg)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start sshd: %v", err)
-	}
-	t.Cleanup(func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-	})
-	waitForPort(t, port)
-	return port
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func waitForPort(t *testing.T, port int) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("sshd did not start listening on port %d", port)
-}
-
 func testEnv(t *testing.T) (*store.DB, *Service, *store.Host) {
 	t.Helper()
-	requireSSHD(t)
+	testutil.RequireSSHD(t)
 
 	db, err := store.Open(filepath.Join(t.TempDir(), "deployer.db"))
 	if err != nil {
@@ -130,7 +31,7 @@ func testEnv(t *testing.T) (*store.DB, *Service, *store.Host) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := startSSHD(t, id.AuthorizedKey())
+	port := testutil.StartSSHD(t, id.AuthorizedKey())
 
 	me, err := user.Current()
 	if err != nil {
@@ -238,7 +139,7 @@ func TestPinnedHostKeyMismatchIsRejected(t *testing.T) {
 }
 
 func TestUnreachableHostIsMarkedOffline(t *testing.T) {
-	requireSSHD(t)
+	testutil.RequireSSHD(t)
 	db, err := store.Open(filepath.Join(t.TempDir(), "deployer.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +153,7 @@ func TestUnreachableHostIsMarkedOffline(t *testing.T) {
 
 	ctx := context.Background()
 	h, err := db.CreateHost(ctx, &store.Host{
-		Name: "ghost", Address: "127.0.0.1", Port: freePort(t), Username: "nobody",
+		Name: "ghost", Address: "127.0.0.1", Port: testutil.FreePort(t), Username: "nobody",
 	})
 	if err != nil {
 		t.Fatal(err)

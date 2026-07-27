@@ -1,0 +1,124 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/chinmay28/deployer/server/internal/store"
+)
+
+func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request) {
+	list, err := s.DB.ListInstallations(r.Context())
+	if err != nil {
+		s.writeStoreError(w, err, "list installations")
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
+	in, err := s.installationFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "get installation")
+		return
+	}
+	writeJSON(w, http.StatusOK, in)
+}
+
+// handleForgetInstallation removes Deployer's record of an app on a host. The
+// app itself is left running; Deployer has no uninstall command to run.
+func (s *Server) handleForgetInstallation(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid installation id")
+		return
+	}
+	if err := s.DB.DeleteInstallation(r.Context(), id); err != nil {
+		s.writeStoreError(w, err, "forget installation")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCheckInstallation(w http.ResponseWriter, r *http.Request) {
+	in, err := s.installationFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "check installation")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	status, detail := s.Health.CheckOne(ctx, in)
+	writeJSON(w, http.StatusOK, map[string]string{"healthStatus": status, "healthDetail": detail})
+}
+
+// handleRedeploy runs an installed app again on the same host, reusing the
+// parameters from last time unless the request overrides them. This is the
+// one-tap path in the UI.
+func (s *Server) handleRedeploy(w http.ResponseWriter, r *http.Request) {
+	in, err := s.installationFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "redeploy")
+		return
+	}
+	body := deployRequest{Params: map[string]string{}}
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	params := map[string]string{}
+	for k, v := range in.Params {
+		params[k] = v
+	}
+	for k, v := range body.Params {
+		params[k] = v
+	}
+	s.startDeployment(w, r, in.AppID, in.HostID, params)
+}
+
+// overview is everything the dashboard needs in one request, which matters on
+// a phone.
+type overview struct {
+	Hosts         []hostView            `json:"hosts"`
+	Installations []*store.Installation `json:"installations"`
+	Recent        []*store.Deployment   `json:"recentDeployments"`
+}
+
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	hostList, err := s.DB.ListHosts(r.Context())
+	if err != nil {
+		s.writeStoreError(w, err, "overview")
+		return
+	}
+	latest, err := s.DB.LatestSamples(r.Context())
+	if err != nil {
+		s.writeStoreError(w, err, "overview")
+		return
+	}
+	installs, err := s.DB.ListInstallations(r.Context())
+	if err != nil {
+		s.writeStoreError(w, err, "overview")
+		return
+	}
+	recent, err := s.DB.ListDeployments(r.Context(), store.DeploymentFilter{Limit: 10})
+	if err != nil {
+		s.writeStoreError(w, err, "overview")
+		return
+	}
+	views := make([]hostView, 0, len(hostList))
+	for _, h := range hostList {
+		views = append(views, hostView{Host: h, Latest: latest[h.ID]})
+	}
+	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: installs, Recent: recent})
+}
+
+func (s *Server) installationFromPath(r *http.Request) (*store.Installation, error) {
+	id, err := pathID(r)
+	if err != nil {
+		return nil, store.ErrNotFound
+	}
+	return s.DB.GetInstallation(r.Context(), id)
+}
