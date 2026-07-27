@@ -47,12 +47,12 @@ func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deploym
 	var params, started string
 	var finished sql.NullString
 	var appName, hostName sql.NullString
+	// Every query joins the app and host names; the log is only worth carrying
+	// when a single deployment was asked for.
 	targets := []any{&d.ID, &d.AppID, &d.HostID, &d.Command, &params, &d.Status,
-		&d.ExitCode, &d.Error, &started, &finished}
+		&d.ExitCode, &d.Error, &started, &finished, &appName, &hostName}
 	if withLog {
 		targets = append(targets, &d.Log)
-	} else {
-		targets = append(targets, &appName, &hostName)
 	}
 	if err := row.Scan(targets...); err != nil {
 		if err == sql.ErrNoRows {
@@ -109,8 +109,11 @@ func (d *DB) FinishDeployment(ctx context.Context, id int64, status string, exit
 
 // GetDeployment returns one deployment including its log.
 func (d *DB) GetDeployment(ctx context.Context, id int64) (*Deployment, error) {
-	row := d.sql.QueryRowContext(ctx,
-		`SELECT `+deploymentColumns+`, d.log FROM deployments d WHERE d.id = ?`, id)
+	row := d.sql.QueryRowContext(ctx, `SELECT `+deploymentColumns+`, a.name, h.name, d.log
+		FROM deployments d
+		JOIN apps a ON a.id = d.app_id
+		JOIN hosts h ON h.id = d.host_id
+		WHERE d.id = ?`, id)
 	return scanDeployment(row, true)
 }
 
