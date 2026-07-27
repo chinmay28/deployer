@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { ApiError } from '../api'
 import { percent, severity } from '../lib/format'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -162,10 +163,13 @@ export function useLoader<T>(
   data: T | null
   error: string | null
   loading: boolean
+  /** True when Deployer could not be reached at all, as opposed to refusing. */
+  offline: boolean
   reload: () => void
 } {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [offline, setOffline] = useState(false)
   const [loading, setLoading] = useState(true)
   const loadRef = useRef(load)
   loadRef.current = load
@@ -179,9 +183,15 @@ export function useLoader<T>(
         if (!cancelled) {
           setData(result)
           setError(null)
+          setOffline(false)
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e))
+          // Status 0 means the request never landed — Deployer is restarting,
+          // or the network dropped. Either way it is worth waiting out.
+          setOffline(e instanceof ApiError && e.status === 0)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -199,7 +209,33 @@ export function useLoader<T>(
   }, [...deps, nonce, intervalMs])
 
   const reload = useCallback(() => setNonce((n) => n + 1), [])
-  return { data, error, loading, reload }
+  return { data, error, loading, offline, reload }
+}
+
+/**
+ * Loading tells the user what is wrong, and — importantly — what isn't.
+ * Deployer being briefly unreachable is normal while it updates itself, so
+ * that reads as "reconnecting", not as a failure.
+ */
+export function Loading({
+  error,
+  offline,
+  hasData,
+}: {
+  error: string | null
+  offline?: boolean
+  hasData: boolean
+}) {
+  if (!error) return null
+  if (offline) {
+    return (
+      <Banner tone="warn">
+        Can't reach Deployer — reconnecting…
+        {hasData ? ' Showing the last state it reported.' : ''}
+      </Banner>
+    )
+  }
+  return <Banner tone="bad">{error}</Banner>
 }
 
 /** Sparkline draws a small trend line; flat when there is nothing to show. */

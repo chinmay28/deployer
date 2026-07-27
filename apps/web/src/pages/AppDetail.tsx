@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HealthBadge } from '../components/status'
-import { Banner, Card, Empty, Field, SectionTitle, Sheet, useLoader } from '../components/ui'
+import { Banner, Card, Empty, Field, Loading, SectionTitle, Sheet, useLoader } from '../components/ui'
 import { ago, shellQuote, time } from '../lib/format'
 import type { App, Host, Installation } from '../types'
 
@@ -12,7 +12,7 @@ export default function AppDetail() {
   const appId = Number(id)
   const navigate = useNavigate()
 
-  const { data: app, error } = useLoader(() => api.app(appId), [appId])
+  const { data: app, error, offline } = useLoader(() => api.app(appId), [appId], 10000)
   const { data: hosts } = useLoader(() => api.hosts(), [], 15000)
   const { data: installs, reload: reloadInstalls } = useLoader(
     () => api.installations(),
@@ -69,7 +69,7 @@ export default function AppDetail() {
         </Link>
       }
     >
-      {error && <Banner tone="bad">{error}</Banner>}
+      <Loading error={error} offline={offline} hasData={!!app} />
       {actionError && <Banner tone="bad">{actionError}</Banner>}
 
       {app && (

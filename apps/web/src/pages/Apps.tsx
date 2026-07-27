@@ -2,11 +2,11 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { HealthBadge } from '../components/status'
-import { Banner, Empty, useLoader } from '../components/ui'
+import { Empty, Loading, useLoader } from '../components/ui'
 import { ago } from '../lib/format'
 
 export default function Apps() {
-  const { data, error, loading } = useLoader(() => api.apps(), [], 15000)
+  const { data, error, loading, offline } = useLoader(() => api.apps(), [], 15000)
   const { data: installs } = useLoader(() => api.installations(), [], 15000)
 
   return (
@@ -18,7 +18,7 @@ export default function Apps() {
         </Link>
       }
     >
-      {error && <Banner tone="bad">{error}</Banner>}
+      <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
       {data?.length === 0 && (
