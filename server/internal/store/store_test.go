@@ -1,0 +1,201 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func testDB(t *testing.T) *DB {
+	t.Helper()
+	db, err := Open(filepath.Join(t.TempDir(), "nested", "deployer.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestMigrationsAreIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deployer.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if err := db.SetSetting(context.Background(), "k", "v"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+	db.Close()
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db2.Close()
+	v, ok, err := db2.GetSetting(context.Background(), "k")
+	if err != nil || !ok || v != "v" {
+		t.Fatalf("GetSetting after reopen = %q, %v, %v", v, ok, err)
+	}
+}
+
+func TestSettingsUpsert(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if _, ok, err := db.GetSetting(ctx, "missing"); err != nil || ok {
+		t.Fatalf("GetSetting(missing) = ok %v, err %v; want false, nil", ok, err)
+	}
+	if err := db.SetSetting(ctx, "pin", "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSetting(ctx, "pin", "5678"); err != nil {
+		t.Fatal(err)
+	}
+	v, ok, err := db.GetSetting(ctx, "pin")
+	if err != nil || !ok || v != "5678" {
+		t.Fatalf("GetSetting = %q, %v, %v; want 5678", v, ok, err)
+	}
+}
+
+func TestHostCRUD(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	h, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "nakedpi.local", Port: 22, Username: "chinmay"})
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+	if h.ID == 0 || h.Status != StatusUnknown {
+		t.Fatalf("created host = %+v", h)
+	}
+	if h.CreatedAt.IsZero() {
+		t.Error("createdAt not parsed")
+	}
+
+	if _, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "other", Port: 22, Username: "x"}); err == nil {
+		t.Error("expected a unique-name violation")
+	}
+
+	h.Address = "192.168.2.123"
+	if err := db.UpdateHost(ctx, h); err != nil {
+		t.Fatalf("UpdateHost: %v", err)
+	}
+	got, err := db.GetHost(ctx, h.ID)
+	if err != nil || got.Address != "192.168.2.123" {
+		t.Fatalf("GetHost = %+v, %v", got, err)
+	}
+
+	if _, err := db.GetHost(ctx, 9999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetHost(missing) = %v, want ErrNotFound", err)
+	}
+	if err := db.DeleteHost(ctx, 9999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteHost(missing) = %v, want ErrNotFound", err)
+	}
+	if err := db.DeleteHost(ctx, h.ID); err != nil {
+		t.Fatalf("DeleteHost: %v", err)
+	}
+	if list, err := db.ListHosts(ctx); err != nil || len(list) != 0 {
+		t.Fatalf("ListHosts after delete = %v, %v", list, err)
+	}
+}
+
+func TestHostStatusTransitions(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	h, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "a", Port: 22, Username: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	facts := HostFacts{Hostname: "nakedpi", OS: "Debian 12", Kernel: "6.6", Arch: "aarch64", SudoOK: true}
+	if err := db.MarkHostOnline(ctx, h.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.GetHost(ctx, h.ID)
+	if got.Status != StatusOnline || !got.SudoOK || got.Hostname != "nakedpi" {
+		t.Fatalf("after MarkHostOnline: %+v", got)
+	}
+	if got.LastSeenAt == nil {
+		t.Fatal("lastSeenAt not set")
+	}
+
+	if err := db.MarkHostFailed(ctx, h.ID, StatusOffline, "connection refused"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.GetHost(ctx, h.ID)
+	if got.Status != StatusOffline || got.LastError != "connection refused" {
+		t.Fatalf("after MarkHostFailed: %+v", got)
+	}
+	// Facts from the last successful connect stay visible while offline.
+	if got.Hostname != "nakedpi" {
+		t.Errorf("facts cleared on failure: %+v", got)
+	}
+}
+
+func TestSamplesRoundTripAndPrune(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	h, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "a", Port: 22, Username: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	temp := 48.5
+	now := time.Now().UTC()
+	old := &Sample{HostID: h.ID, TakenAt: now.Add(-48 * time.Hour), CPUPct: 10, MemTotal: 100, MemUsed: 50}
+	recent := &Sample{
+		HostID: h.ID, TakenAt: now, CPUPct: 25.5, MemUsed: 2048, MemTotal: 8192,
+		Load1: 0.5, UptimeS: 3600, TempC: &temp,
+		Disks: []Disk{{Mount: "/", Device: "/dev/sda1", TotalBytes: 100, UsedBytes: 40}},
+	}
+	for _, s := range []*Sample{old, recent} {
+		if err := db.InsertSample(ctx, s); err != nil {
+			t.Fatalf("InsertSample: %v", err)
+		}
+	}
+
+	latest, err := db.LatestSamples(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := latest[h.ID]
+	if got == nil || got.CPUPct != 25.5 {
+		t.Fatalf("LatestSamples = %+v, want the recent one", got)
+	}
+	if got.TempC == nil || *got.TempC != 48.5 {
+		t.Errorf("tempC round trip = %v", got.TempC)
+	}
+	if len(got.Disks) != 1 || got.Disks[0].Mount != "/" {
+		t.Errorf("disks round trip = %+v", got.Disks)
+	}
+
+	within, err := db.SamplesSince(ctx, h.ID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(within) != 1 {
+		t.Fatalf("SamplesSince(1h) returned %d samples, want 1", len(within))
+	}
+
+	n, err := db.PruneSamples(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("PruneSamples removed %d, want 1", n)
+	}
+
+	// Deleting a host must take its telemetry with it.
+	if err := db.DeleteHost(ctx, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	left, err := db.SamplesSince(ctx, h.ID, now.Add(-72*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("samples survived host deletion: %d rows", len(left))
+	}
+}

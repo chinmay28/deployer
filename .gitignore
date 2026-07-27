@@ -1,0 +1,16 @@
+# Build output
+bin/
+node_modules/
+apps/web/dist/
+
+# Vite writes fingerprinted assets into the embed directory at build time;
+# only the placeholder index.html is tracked.
+server/internal/web/dist/assets/
+
+# Runtime data (SQLite database holds the SSH private key — never commit it)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+.DS_Store
