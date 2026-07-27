@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+#
+# Installs or upgrades Deployer as a systemd service.
+#
+#   curl -fsSL https://raw.githubusercontent.com/chinmay28/deployer/main/scripts/quickstart.sh | sudo bash
+#
+# Re-running upgrades in place: the database is snapshotted, the new build is
+# health-checked after it starts, and a failed upgrade rolls back to the
+# previous binary and database.
+#
+# Environment overrides:
+#   DEPLOYER_PORT   port to listen on              (default 8899)
+#   DEPLOYER_PIN    optional PIN for the web UI    (default none)
+#   DEPLOYER_REF    git branch, tag or commit      (default main)
+#   DEPLOYER_REPO   repository to build from
+#
+# Paths can be moved with DEPLOYER_INSTALL_DIR, DEPLOYER_DATA_DIR,
+# DEPLOYER_SERVICE_USER and DEPLOYER_UNIT.
+#
+set -euo pipefail
+
+PORT="${DEPLOYER_PORT:-8899}"
+PIN="${DEPLOYER_PIN:-}"
+REF="${DEPLOYER_REF:-main}"
+REPO="${DEPLOYER_REPO:-https://github.com/chinmay28/deployer.git}"
+
+SERVICE_USER="${DEPLOYER_SERVICE_USER:-deployer}"
+INSTALL_DIR="${DEPLOYER_INSTALL_DIR:-/opt/deployer}"
+BUILD_DIR="$INSTALL_DIR/src"
+DATA_DIR="${DEPLOYER_DATA_DIR:-/var/lib/deployer}"
+BACKUP_DIR="$DATA_DIR/backups"
+DB_PATH="$DATA_DIR/deployer.db"
+UNIT="${DEPLOYER_UNIT:-/etc/systemd/system/deployer.service}"
+GO_VERSION=1.24.7
+NODE_MAJOR=22
+KEEP_BACKUPS=5
+
+log()  { printf '\033[1;35m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "Run this with sudo."
+
+case "${1:-}" in
+  --uninstall) UNINSTALL=1 ;;
+  "")          UNINSTALL=0 ;;
+  *)           die "Unknown option: $1 (only --uninstall is supported)" ;;
+esac
+
+if [ "$UNINSTALL" = 1 ]; then
+  log "Stopping and removing the Deployer service"
+  systemctl disable --now deployer.service 2>/dev/null || true
+  rm -f "$UNIT"
+  systemctl daemon-reload
+  rm -rf "$INSTALL_DIR"
+  echo
+  log "Removed. Your data is still at $DATA_DIR (it holds Deployer's SSH key)."
+  log "Delete it with: sudo rm -rf $DATA_DIR && sudo userdel $SERVICE_USER"
+  exit 0
+fi
+
+command -v systemctl >/dev/null || die "This installer needs systemd."
+command -v apt-get >/dev/null || die "This installer expects a Debian or Ubuntu system."
+
+case "$(uname -m)" in
+  x86_64|amd64) GO_ARCH=amd64 ;;
+  aarch64|arm64) GO_ARCH=arm64 ;;
+  armv6l|armv7l) GO_ARCH=armv6l ;;
+  *) die "Unsupported architecture: $(uname -m)" ;;
+esac
+
+# A bare `[ test ] && cmd` would abort the script under `set -e` whenever the
+# test is false, so every conditional below is a full if statement.
+UPGRADE=0
+if [ -x "$INSTALL_DIR/deployer" ]; then
+  UPGRADE=1
+fi
+
+# ---------------------------------------------------------------- build tools
+
+export DEBIAN_FRONTEND=noninteractive
+missing=""
+for tool in git curl; do
+  if ! command -v "$tool" >/dev/null; then
+    missing="$missing $tool"
+  fi
+done
+if [ -n "$missing" ]; then
+  log "Installing build dependencies:$missing"
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends git curl ca-certificates >/dev/null
+fi
+
+need_go=1
+if command -v go >/dev/null; then
+  current="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
+  # A newer Go than we pin is fine; an older one is not.
+  if [ -n "$current" ] && [ "$(printf '%s\n%s\n' "$GO_VERSION" "$current" | sort -V | head -1)" = "$GO_VERSION" ]; then
+    need_go=0
+  fi
+fi
+if [ "$need_go" = 1 ]; then
+  log "Installing Go $GO_VERSION (build-time only)"
+  tarball="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+  curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}"
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "/tmp/${tarball}"
+  rm -f "/tmp/${tarball}"
+fi
+export PATH="/usr/local/go/bin:$PATH"
+command -v go >/dev/null || die "Go is still not on PATH."
+
+need_node=1
+if command -v node >/dev/null; then
+  major="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
+  if [ -n "$major" ] && [ "$major" -ge 20 ] 2>/dev/null; then
+    need_node=0
+  fi
+fi
+if [ "$need_node" = 1 ]; then
+  log "Installing Node $NODE_MAJOR (build-time only)"
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null
+  apt-get install -y -qq nodejs >/dev/null
+fi
+
+# --------------------------------------------------------------------- source
+
+log "Fetching Deployer ($REF)"
+mkdir -p "$INSTALL_DIR"
+if [ -d "$BUILD_DIR/.git" ]; then
+  git -C "$BUILD_DIR" remote set-url origin "$REPO"
+  git -C "$BUILD_DIR" fetch --depth 1 origin "$REF" --quiet
+  git -C "$BUILD_DIR" checkout --quiet --force FETCH_HEAD
+else
+  rm -rf "$BUILD_DIR"
+  git clone --depth 1 --branch "$REF" "$REPO" "$BUILD_DIR" --quiet 2>/dev/null ||
+    die "Could not clone $REPO at $REF"
+fi
+VERSION="$(git -C "$BUILD_DIR" rev-parse --short HEAD)"
+
+# ---------------------------------------------------------------------- build
+# Everything is built before the running service is touched, so a compile
+# failure leaves the current install alone.
+
+log "Building the web app"
+( cd "$BUILD_DIR/apps/web" && npm ci --silent && npm run build --silent ) ||
+  die "Web build failed."
+
+log "Building the server"
+( cd "$BUILD_DIR/server" && go build -trimpath -ldflags "-s -w" -o "$INSTALL_DIR/deployer.new" ./cmd/deployer ) ||
+  die "Server build failed."
+
+# ------------------------------------------------------------------- accounts
+
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  log "Creating the $SERVICE_USER system user"
+  useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
+mkdir -p "$DATA_DIR" "$BACKUP_DIR"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+# The database holds Deployer's SSH private key.
+chmod 700 "$DATA_DIR" "$BACKUP_DIR"
+
+# --------------------------------------------------------------------- deploy
+
+if [ "$UPGRADE" = 1 ]; then
+  log "Stopping Deployer for the upgrade"
+  systemctl stop deployer.service || true
+fi
+
+BACKUP=""
+if [ -f "$DB_PATH" ]; then
+  BACKUP="$BACKUP_DIR/deployer-$(date +%Y%m%d-%H%M%S).db"
+  log "Snapshotting the database to $BACKUP"
+  # The service is stopped, so a plain copy is consistent. The -wal and -shm
+  # files are checkpointed into the database on clean shutdown.
+  cp "$DB_PATH" "$BACKUP"
+  if [ -f "$DB_PATH-wal" ]; then
+    cp "$DB_PATH-wal" "$BACKUP-wal"
+  fi
+  chown -R "$SERVICE_USER:$SERVICE_USER" "$BACKUP_DIR"
+fi
+
+PREVIOUS=""
+if [ "$UPGRADE" = 1 ]; then
+  PREVIOUS="$INSTALL_DIR/deployer.prev"
+  cp "$INSTALL_DIR/deployer" "$PREVIOUS"
+fi
+mv "$INSTALL_DIR/deployer.new" "$INSTALL_DIR/deployer"
+chmod 755 "$INSTALL_DIR/deployer"
+
+log "Writing $UNIT"
+cat > "$UNIT" <<UNIT_EOF
+[Unit]
+Description=Deployer — deploys apps onto home servers
+Documentation=https://github.com/chinmay28/deployer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$DATA_DIR
+ExecStart=$INSTALL_DIR/deployer -addr :$PORT -db $DB_PATH
+Environment=DEPLOYER_PIN=$PIN
+Restart=on-failure
+RestartSec=3
+# The database holds an SSH private key: keep it readable only by this user.
+UMask=0077
+
+# Deployer only needs to read its own data directory and reach the network.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=$DATA_DIR
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+systemctl daemon-reload
+systemctl enable deployer.service >/dev/null 2>&1 || true
+
+log "Starting Deployer"
+systemctl restart deployer.service
+
+# ------------------------------------------------------------- health & rollback
+
+healthy=0
+for _ in $(seq 1 30); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    healthy=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$healthy" = 0 ]; then
+  warn "Deployer did not come up. Recent log:"
+  journalctl -u deployer.service -n 25 --no-pager || true
+
+  if [ -n "$PREVIOUS" ] && [ -x "$PREVIOUS" ]; then
+    warn "Rolling back to the previous version"
+    systemctl stop deployer.service || true
+    mv "$PREVIOUS" "$INSTALL_DIR/deployer"
+    if [ -n "$BACKUP" ] && [ -f "$BACKUP" ]; then
+      cp "$BACKUP" "$DB_PATH"
+      if [ -f "$BACKUP-wal" ]; then
+        cp "$BACKUP-wal" "$DB_PATH-wal"
+      else
+        rm -f "$DB_PATH-wal"
+      fi
+      chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
+    fi
+    systemctl start deployer.service || true
+    die "Upgrade failed and was rolled back. The previous version is running again."
+  fi
+  die "Deployer failed to start. Check: journalctl -u deployer -f"
+fi
+
+rm -f "$PREVIOUS"
+# Keep the most recent snapshots and drop the rest.
+find "$BACKUP_DIR" -maxdepth 1 -name 'deployer-*.db' -printf '%T@ %p\n' 2>/dev/null |
+  sort -rn | tail -n +$((KEEP_BACKUPS + 1)) | cut -d' ' -f2- | while read -r old; do
+    rm -f "$old" "$old-wal"
+  done
+
+ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ -z "$ADDRESS" ]; then
+  ADDRESS="127.0.0.1"
+fi
+
+echo
+log "Deployer $VERSION is running"
+echo "     http://$ADDRESS:$PORT  (also http://$(hostname).local:$PORT if mDNS is set up)"
+echo
+if [ -z "$PIN" ]; then
+  echo "     No PIN is set: anyone who can reach that address can deploy to your hosts."
+  echo "     Keep it on your LAN or Tailscale network. To require a PIN:"
+  echo "       curl -fsSL .../quickstart.sh | sudo DEPLOYER_PIN=1234 bash"
+  echo
+fi
+echo "     Open Settings in the app for the two commands to run on each host you add."
+echo "     Logs:    journalctl -u deployer -f"
+echo "     Upgrade: re-run this script"
+echo

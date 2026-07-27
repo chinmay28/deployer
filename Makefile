@@ -3,7 +3,7 @@ GO ?= go
 BIN := bin/deployer
 WEB_DIST := server/internal/web/dist
 
-.PHONY: build server web test vet run clean
+.PHONY: build server web test test-installer vet run clean
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
@@ -27,6 +27,10 @@ web:
 
 test:
 	cd server && $(GO) test ./...
+
+## test-installer: install, upgrade, rollback and uninstall in a sandbox (needs root)
+test-installer:
+	./scripts/test-quickstart.sh
 
 vet:
 	cd server && $(GO) vet ./...
