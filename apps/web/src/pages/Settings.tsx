@@ -3,11 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { HomeBadge, HostBadge } from '../components/status'
-import { Banner, Card, Copyable, Field, SectionTitle, Sheet, useLoader } from '../components/ui'
+import { Banner, Card, Copyable, Field, Loading, SectionTitle, Sheet, useLoader } from '../components/ui'
 import type { SelfInfo } from '../types'
 
 export default function Settings() {
-  const { data, error, reload } = useLoader(() => api.sshKey(), [])
+  const { data, error, offline, reload } = useLoader(() => api.sshKey(), [])
   // Refreshed on a timer so a running update surfaces without a manual reload.
   const { data: self, reload: reloadSelf } = useLoader(() => api.self(), [], 5000)
   const [confirmRotate, setConfirmRotate] = useState(false)
@@ -30,7 +30,7 @@ export default function Settings() {
 
   return (
     <Page title="Settings">
-      {error && <Banner tone="bad">{error}</Banner>}
+      <Loading error={error} offline={offline} hasData={!!data} />
       {notice && <Banner tone="warn">{notice}</Banner>}
 
       <SectionTitle>This machine</SectionTitle>

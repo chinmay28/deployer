@@ -95,27 +95,46 @@ func (c *Checker) CheckAll(ctx context.Context) {
 	wg.Wait()
 }
 
-// CheckSoon runs a single check after a delay, so a freshly deployed app has a
-// moment to start listening.
+// settleAttempts is how many times a just-deployed app is given to come up
+// before a failure is recorded. A service that restarts — Deployer included —
+// is briefly unreachable, and calling that unhealthy would be wrong.
+const settleAttempts = 12
+
+// CheckSoon checks a freshly deployed app, retrying until it answers or the
+// attempts run out, so a slow restart is not reported as a failure.
 func (c *Checker) CheckSoon(appID, hostID int64, delay time.Duration) {
 	go func() {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		in, err := c.db.FindInstallation(ctx, appID, hostID)
-		if err != nil {
-			return
+
+		for attempt := 0; attempt < settleAttempts; attempt++ {
+			in, err := c.db.FindInstallation(ctx, appID, hostID)
+			if err != nil {
+				return
+			}
+			host, err := c.db.GetHost(ctx, hostID)
+			if err != nil {
+				return
+			}
+			status, _ := c.checkAndRecord(ctx, in, host)
+			if status != store.HealthFailing {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(healthSettleInterval):
+			}
 		}
-		host, err := c.db.GetHost(ctx, hostID)
-		if err != nil {
-			return
-		}
-		c.checkAndRecord(ctx, in, host)
 	}()
 }
+
+// healthSettleInterval spaces out the attempts above.
+const healthSettleInterval = 5 * time.Second
 
 // CheckOne checks a single installation now and records the result.
 func (c *Checker) CheckOne(ctx context.Context, in *store.Installation) (string, string) {
@@ -127,6 +146,13 @@ func (c *Checker) CheckOne(ctx context.Context, in *store.Installation) (string,
 }
 
 func (c *Checker) checkAndRecord(ctx context.Context, in *store.Installation, host *store.Host) (string, string) {
+	// An app that is being deployed right now is expected to be down for a
+	// moment — Deployer updating itself is exactly this case. Recording a
+	// failure would only mean showing "Not responding" for something that is
+	// mid-restart, so the last known result stands.
+	if running, err := c.db.HasRunningDeployment(ctx, in.AppID, in.HostID); err == nil && running {
+		return store.HealthUnknown, "a deployment is running"
+	}
 	status, detail := c.check(ctx, in, host)
 	if err := c.db.SetInstallationHealth(ctx, in.ID, status, detail); err != nil && ctx.Err() == nil {
 		c.log.Error("health: record result", "installation", in.ID, "err", err)

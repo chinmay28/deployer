@@ -351,3 +351,12 @@ func (d *DB) SetDetachedLog(ctx context.Context, id int64, path string) error {
 	_, err := d.sql.ExecContext(ctx, `UPDATE deployments SET detached_log = ? WHERE id = ?`, path, id)
 	return err
 }
+
+// HasRunningDeployment reports whether this app is mid-deployment on this host.
+func (d *DB) HasRunningDeployment(ctx context.Context, appID, hostID int64) (bool, error) {
+	var count int
+	err := d.sql.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deployments WHERE app_id = ? AND host_id = ? AND status = ?`,
+		appID, hostID, DeployRunning).Scan(&count)
+	return count > 0, err
+}

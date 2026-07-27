@@ -64,7 +64,15 @@ that ends in `exit 1` still reports one.
 Deployer follows that file. When it is restarted by the update it hands the
 deployment over rather than recording a verdict, and the process that comes back
 picks the same file up, replays everything written while it was gone, and
-finishes the record. The log page reconnects on its own.
+finishes the record.
+
+**The outage is expected, and treated as such.** While Deployer is down the UI
+says "Can't reach Deployer — reconnecting…" and keeps showing the last state it
+reported, rather than an error; the log page reconnects on its own; and health
+checks are suppressed for any app with a deployment in flight, so Deployer does
+not report itself as "Not responding" while it is the thing restarting. After a
+deployment, a health check retries for a minute before calling anything
+unhealthy, which is what a service that restarts needs.
 
 ## Adding a host
 

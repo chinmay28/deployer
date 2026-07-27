@@ -2,17 +2,17 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
-import { Banner, Empty, Meter, SectionTitle, useLoader } from '../components/ui'
+import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
 import { ago, bytes, percent, time } from '../lib/format'
 import type { Host } from '../types'
 
 /** The dashboard: everything in one request, refreshed while it is open. */
 export default function Overview() {
-  const { data, error, loading } = useLoader(() => api.overview(), [], 5000)
+  const { data, error, loading, offline } = useLoader(() => api.overview(), [], 5000)
 
   return (
     <Page title="Deployer">
-      {error && <Banner tone="bad">{error}</Banner>}
+      <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
       {data && (

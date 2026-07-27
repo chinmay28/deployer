@@ -3,16 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HomeBadge, HostBadge } from '../components/status'
-import {
-  Badge,
-  Banner,
-  Card,
-  Meter,
-  SectionTitle,
-  Sheet,
-  Sparkline,
-  useLoader,
-} from '../components/ui'
+import { Badge, Banner, Card, Loading, Meter, SectionTitle, Sheet, Sparkline, useLoader } from '../components/ui'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
 import type { HostTestResult } from '../types'
 
@@ -23,7 +14,7 @@ export default function HostDetail() {
 
   // Asking for metrics also tells the server someone is watching, which raises
   // the sampling rate for this host.
-  const { data: host, error } = useLoader(() => api.host(hostId), [hostId], 5000)
+  const { data: host, error, offline } = useLoader(() => api.host(hostId), [hostId], 5000)
   const { data: metrics } = useLoader(() => api.hostMetrics(hostId, 60), [hostId], 5000)
   const { data: deployments } = useLoader(() => api.deployments({ hostId, limit: 8 }), [hostId], 10000)
 
@@ -67,7 +58,7 @@ export default function HostDetail() {
         </Link>
       }
     >
-      {error && <Banner tone="bad">{error}</Banner>}
+      <Loading error={error} offline={offline} hasData={!!host} />
       {actionError && <Banner tone="bad">{actionError}</Banner>}
 
       {host && (

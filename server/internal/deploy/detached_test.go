@@ -447,3 +447,65 @@ func TestShutdownHandsOverWithoutRecording(t *testing.T) {
 		t.Errorf("output written while Deployer was down was lost:\n%s", resumed.Log)
 	}
 }
+
+// An app is expected to be unreachable while it is being deployed — Deployer
+// updating itself most of all. Recording a failure then would show "Not
+// responding" for something that is simply mid-restart.
+func TestHealthIsNotFailedDuringADeployment(t *testing.T) {
+	e := selfHostEnv(t)
+	if _, err := e.svc.Probe(context.Background(), e.host); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// An installed app with a health check that will not answer.
+	app := e.app(t, &store.App{
+		Name: "Deployer", InstallCommand: "sleep 20", SelfUpdate: true,
+		HealthType: store.HealthHTTP, HealthTarget: "http://127.0.0.1:1/",
+	})
+	dep, err := e.db.CreateDeployment(ctx, &store.Deployment{AppID: app.ID, HostID: e.host.ID, Command: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.FinishDeployment(ctx, dep.ID, store.DeploySucceeded, nil, "", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.UpsertInstallation(ctx, app.ID, e.host.ID, nil, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	in, err := e.db.FindInstallation(ctx, app.ID, e.host.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// With nothing running, the unreachable check is honestly reported.
+	if status, _ := e.checker.CheckOne(ctx, in); status != store.HealthFailing {
+		t.Fatalf("health = %q, want failing when nothing is deploying", status)
+	}
+	if reloaded, _ := e.db.GetInstallation(ctx, in.ID); reloaded.HealthStatus != store.HealthFailing {
+		t.Fatalf("stored health = %q, want failing", reloaded.HealthStatus)
+	}
+
+	// Start a deployment: the same check must now hold its tongue.
+	started, err := e.runner.Start(ctx, app.ID, e.host.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		e.runner.Cancel(started.ID)
+		os.Remove(started.DetachedLog)
+	})
+
+	status, detail := e.checker.CheckOne(ctx, in)
+	if status == store.HealthFailing {
+		t.Errorf("health = %q (%s), want the failure suppressed while deploying", status, detail)
+	}
+	if !strings.Contains(detail, "deployment is running") {
+		t.Errorf("detail = %q, want it to explain the pause", detail)
+	}
+	// And the stored result is left as it was, not overwritten with noise.
+	reloaded, _ := e.db.GetInstallation(ctx, in.ID)
+	if reloaded.HealthStatus != store.HealthFailing {
+		t.Errorf("stored health = %q, want the previous result untouched", reloaded.HealthStatus)
+	}
+}
