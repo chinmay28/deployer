@@ -10,7 +10,12 @@ import (
 
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
-		"8787":             `'8787'`,
+		// Ordinary values stay readable...
+		"8787":            "8787",
+		"nakedpi.local":   "nakedpi.local",
+		"http://pi:8787/": "http://pi:8787/",
+		"v1.2.3-rc1":      "v1.2.3-rc1",
+		// ...anything the shell could act on is quoted.
 		"":                 `''`,
 		"a b":              `'a b'`,
 		"it's":             `'it'\''s'`,
@@ -18,6 +23,11 @@ func TestShellQuote(t *testing.T) {
 		"$(whoami)":        `'$(whoami)'`,
 		"`id`":             "'`id`'",
 		"a'; touch /tmp/x": `'a'\''; touch /tmp/x'`,
+		"~/secrets":        `'~/secrets'`,
+		"*":                `'*'`,
+		"a&b":              `'a&b'`,
+		"a>b":              `'a>b'`,
+		"a\\b":             `'a\b'`,
 	}
 	for in, want := range cases {
 		if got := ShellQuote(in); got != want {
@@ -32,7 +42,7 @@ func TestRenderSubstitutesAndQuotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `install --port '8787' --ref 'main'`; got != want {
+	if want := `install --port 8787 --ref main`; got != want {
 		t.Errorf("Render = %s, want %s", got, want)
 	}
 
@@ -111,7 +121,7 @@ func TestBuildCommandDefaultsAndBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `deploy '192.168.2.123' 'nakedpi' 'chinmay' --port '8787' --tag 'v2'`
+	want := `deploy 192.168.2.123 nakedpi chinmay --port 8787 --tag v2`
 	if command != want {
 		t.Errorf("command = %s\nwant     = %s", command, want)
 	}

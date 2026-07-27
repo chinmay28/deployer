@@ -70,8 +70,19 @@ func ValidateShellTemplate(template string) error {
 	return nil
 }
 
-// ShellQuote renders s as a single POSIX shell word.
+// shellSafe matches values the shell cannot do anything interesting with, so
+// they can be left unquoted. Everything outside this set — spaces, quotes,
+// $, backticks, ;, |, &, <, >, (, ), *, ?, [, ], {, }, ~, !, #, \, newlines —
+// is quoted. Erring toward quoting is the safe direction.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9._:/@=+,-]+$`)
+
+// ShellQuote renders s as a single POSIX shell word. Ordinary values like
+// ports, hostnames and URLs come back unchanged, which keeps the command
+// readable in the confirmation sheet and the deployment log.
 func ShellQuote(s string) string {
+	if shellSafe.MatchString(s) {
+		return s
+	}
 	// A single quote inside single quotes has to be closed, escaped, reopened.
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -4,7 +4,7 @@ import { api } from '../api'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HealthBadge } from '../components/status'
 import { Banner, Card, Empty, Field, SectionTitle, Sheet, useLoader } from '../components/ui'
-import { ago, time } from '../lib/format'
+import { ago, shellQuote, time } from '../lib/format'
 import type { App, Host, Installation } from '../types'
 
 export default function AppDetail() {
@@ -225,7 +225,7 @@ function DeploySheet({
       substitutions.user = host.username
     }
     return app.installCommand.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (match, name) =>
-      name in substitutions ? `'${substitutions[name]}'` : match,
+      name in substitutions ? shellQuote(substitutions[name]) : match,
     )
   }, [app.installCommand, values, host])
 
