@@ -6,6 +6,7 @@ import type {
   Installation,
   Overview,
   Sample,
+  SelfInfo,
   SSHKeyInfo,
 } from './types'
 
@@ -103,6 +104,10 @@ export const api = {
   deployment: (id: number) => request<Deployment>(`/api/deployments/${id}`),
   cancelDeployment: (id: number) =>
     request<{ status: string }>(`/api/deployments/${id}/cancel`, { method: 'POST' }),
+
+  self: () => request<SelfInfo>('/api/self'),
+  selfUpdate: (ref: string) =>
+    request<Deployment>('/api/self/update', { method: 'POST', ...json({ ref }) }),
 
   sshKey: () => request<SSHKeyInfo>('/api/settings/ssh'),
   rotateSSHKey: () => request<SSHKeyInfo>('/api/settings/ssh/rotate', { method: 'POST' }),

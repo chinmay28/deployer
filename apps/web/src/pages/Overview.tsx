@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
-import { DeploymentBadge, HealthBadge, HostBadge } from '../components/status'
+import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
 import { Banner, Empty, Meter, SectionTitle, useLoader } from '../components/ui'
 import { ago, bytes, percent, time } from '../lib/format'
 import type { Host } from '../types'
@@ -94,7 +94,10 @@ function HostSummary({ host }: { host: Host }) {
             {sample ? ` · ${ago(sample.takenAt)}` : ''}
           </div>
         </div>
-        <HostBadge status={host.status} />
+        <div className="row" style={{ gap: 6 }}>
+          {host.isSelf && <HomeBadge />}
+          <HostBadge status={host.status} />
+        </div>
       </div>
 
       {sample ? (

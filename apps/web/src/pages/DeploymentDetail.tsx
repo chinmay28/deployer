@@ -11,7 +11,13 @@ export default function DeploymentDetail() {
   const { id } = useParams()
   const deploymentId = Number(id)
 
-  const { data: initial, error } = useLoader(() => api.deployment(deploymentId), [deploymentId])
+  const { data: initial, error } = useLoader(
+    () => api.deployment(deploymentId),
+    [deploymentId],
+    // Deployer may be restarting mid-deployment; keep re-checking so the page
+    // recovers on its own once it is back.
+    5000,
+  )
   const [log, setLog] = useState('')
   const [status, setStatus] = useState<DeploymentStatus | null>(null)
   const [finishedAt, setFinishedAt] = useState<string | null>(null)
@@ -25,6 +31,10 @@ export default function DeploymentDetail() {
   // log text — no need to merge it with the initial fetch.
   useEffect(() => {
     const source = new EventSource(`/api/deployments/${deploymentId}/stream`)
+    // A self-update restarts Deployer underneath this page. EventSource
+    // reconnects on its own and the server replays the log from the start, so
+    // clear what is on screen rather than appending a second copy.
+    source.onopen = () => setLog('')
     source.addEventListener('log', (event) => {
       setLog((current) => current + (event as MessageEvent).data + '\n')
     })
@@ -35,12 +45,18 @@ export default function DeploymentDetail() {
         error: string
         finishedAt: string | null
       }
+      // Defensive: only a finished deployment ends the stream. A "running"
+      // status would mean the deployment was handed to another process.
+      if (payload.status === 'running') return
       setStatus(payload.status)
       setExitCode(payload.exitCode)
       setFailure(payload.error)
       setFinishedAt(payload.finishedAt)
       source.close()
     })
+    // The stream ends without a verdict when Deployer hands the deployment
+    // over mid-restart. EventSource reconnects on its own.
+    source.addEventListener('handover', () => setLog((current) => current))
     source.onerror = () => {
       // EventSource retries on its own; a closed stream after the status event
       // is the normal ending.
@@ -87,7 +103,12 @@ export default function DeploymentDetail() {
       title={deployment ? `${deployment.appName ?? 'Deployment'}` : 'Deployment'}
       back={deployment ? `/apps/${deployment.appId}` : '/'}
     >
-      {error && <Banner tone="bad">{error}</Banner>}
+      {error && !deployment && <Banner tone="bad">{error}</Banner>}
+      {error && deployment && running && (
+        <Banner tone="warn">
+          Lost contact with Deployer — it may be restarting as part of this update. Reconnecting…
+        </Banner>
+      )}
 
       {deployment && (
         <>

@@ -3,12 +3,15 @@ package hosts
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/chinmay28/deployer/server/internal/selfhost"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
 	"github.com/chinmay28/deployer/server/internal/testutil"
@@ -43,7 +46,7 @@ func testEnv(t *testing.T) (*store.DB, *Service, *store.Host) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db, NewService(db, id), h
+	return db, NewService(db, id, nil), h
 }
 
 func TestProbeAgainstRealHost(t *testing.T) {
@@ -149,7 +152,7 @@ func TestUnreachableHostIsMarkedOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(db, id)
+	svc := NewService(db, id, nil)
 
 	ctx := context.Background()
 	h, err := db.CreateHost(ctx, &store.Host{
@@ -183,3 +186,68 @@ func TestTestReportsHints(t *testing.T) {
 		t.Error("sudo unavailable but no hint offered")
 	}
 }
+
+// The machine id is what makes detection work regardless of the address used:
+// the throwaway sshd runs on this very machine, so a probe of 127.0.0.1 must
+// come back tagged as the home host.
+func TestProbeDetectsTheHomeHost(t *testing.T) {
+	db, _, h := testEnv(t)
+	ctx := context.Background()
+
+	id, err := sshx.EnsureIdentity(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := selfhost.MachineID()
+	if local == "" {
+		t.Skip("this machine has no /etc/machine-id to compare against")
+	}
+	svc := NewService(db, id, selfhost.New(db, selfhost.Config{}, discardLogger()))
+
+	probe, err := svc.Probe(ctx, h)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if probe.Facts.MachineID != local {
+		t.Fatalf("probed machine id = %q, want this machine's %q", probe.Facts.MachineID, local)
+	}
+	if !probe.Facts.IsSelf {
+		t.Error("probing this machine should identify it as the home host")
+	}
+	stored, err := db.GetHost(ctx, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.IsSelf {
+		t.Error("the home host tag was not persisted")
+	}
+	if selfHost, err := db.SelfHost(ctx); err != nil || selfHost.ID != h.ID {
+		t.Errorf("SelfHost = %v, %v; want host %d", selfHost, err, h.ID)
+	}
+}
+
+// A different machine must not be mistaken for this one.
+func TestProbeDoesNotTagOtherMachinesAsHome(t *testing.T) {
+	db, _, h := testEnv(t)
+	ctx := context.Background()
+	id, err := sshx.EnsureIdentity(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := selfhost.New(db, selfhost.Config{}, discardLogger())
+	elsewhere.SetMachineIDForTest("a-different-machine")
+
+	svc := NewService(db, id, elsewhere)
+	probe, err := svc.Probe(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Facts.IsSelf {
+		t.Error("a machine with a different id must not be tagged as home")
+	}
+	if _, err := db.SelfHost(ctx); err == nil {
+		t.Error("no host should be flagged as self")
+	}
+}
+
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

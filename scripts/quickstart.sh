@@ -13,6 +13,8 @@
 #   DEPLOYER_PIN    optional PIN for the web UI    (default none)
 #   DEPLOYER_REF    git branch, tag or commit      (default main)
 #   DEPLOYER_REPO   repository to build from
+#   DEPLOYER_SELF_USER  account Deployer SSHes to this machine as (default: the
+#                       user running the installer), for updating itself
 #
 # Paths can be moved with DEPLOYER_INSTALL_DIR, DEPLOYER_DATA_DIR,
 # DEPLOYER_SERVICE_USER and DEPLOYER_UNIT.
@@ -25,6 +27,10 @@ REF="${DEPLOYER_REF:-main}"
 REPO="${DEPLOYER_REPO:-https://github.com/chinmay28/deployer.git}"
 
 SERVICE_USER="${DEPLOYER_SERVICE_USER:-deployer}"
+# The account Deployer connects to *this* machine as when updating itself. The
+# service user is a nologin account, so the person running the installer is the
+# sensible default.
+SELF_USER="${DEPLOYER_SELF_USER:-${SUDO_USER:-}}"
 INSTALL_DIR="${DEPLOYER_INSTALL_DIR:-/opt/deployer}"
 BUILD_DIR="$INSTALL_DIR/src"
 DATA_DIR="${DEPLOYER_DATA_DIR:-/var/lib/deployer}"
@@ -204,6 +210,10 @@ Group=$SERVICE_USER
 WorkingDirectory=$DATA_DIR
 ExecStart=$INSTALL_DIR/deployer -addr :$PORT -db $DB_PATH
 Environment=DEPLOYER_PIN=$PIN
+# Used to register this machine as a host so Deployer can update itself.
+Environment=DEPLOYER_SELF_USER=$SELF_USER
+Environment=DEPLOYER_REPO=$REPO
+Environment=DEPLOYER_REF=$REF
 Restart=on-failure
 RestartSec=3
 # The database holds an SSH private key: keep it readable only by this user.
@@ -296,6 +306,11 @@ if [ -z "$PIN" ]; then
   echo "     No PIN is set: anyone who can reach that address can deploy to your hosts."
   echo "     Keep it on your LAN or Tailscale network. To require a PIN:"
   echo "       curl -fsSL .../quickstart.sh | sudo DEPLOYER_PIN=1234 bash"
+  echo
+fi
+if [ -n "$SELF_USER" ]; then
+  echo "     This machine is registered as a host so Deployer can update itself."
+  echo "     Authorize its key for $SELF_USER with the first command in Settings."
   echo
 fi
 echo "     Open Settings in the app for the two commands to run on each host you add."

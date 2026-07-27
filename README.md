@@ -33,6 +33,39 @@ curl -fsSL .../quickstart.sh | sudo DEPLOYER_PIN=1234 DEPLOYER_PORT=9000 DEPLOYE
 curl -fsSL .../quickstart.sh | sudo bash -s -- --uninstall
 ```
 
+## The home host
+
+Deployer recognises the machine it runs on and registers it as a host, tagged
+**Home**. Recognition is by `/etc/machine-id`, so it holds however you reach the
+machine — `127.0.0.1`, a LAN address, or `nakedpi.local` all resolve to the same
+identity.
+
+The home host is an ordinary host in every other respect: Deployer still
+connects to it over SSH, and still needs its key authorized and passwordless
+sudo. That is deliberate. Running install commands directly would mean running
+them inside Deployer's systemd sandbox, where `NoNewPrivileges=yes` blocks
+`sudo` outright — going through SSH keeps the sandbox intact.
+
+Delete the home host if you don't want it; a restart won't bring it back.
+
+## Updating Deployer
+
+Settings shows the running version with an **Update Deployer** button. It builds
+from a git ref you can change at the confirmation step (branch, tag or commit),
+and is recorded as a normal deployment with a full log.
+
+The awkward part is that the update restarts Deployer half way through, killing
+the process watching it — and, with it, the SSH session carrying the install
+script, because `sshd` hangs up a remote command when its client disappears. So
+a self-update on the home host runs **detached**: `nohup setsid`, output to a
+file on the host, with the exit status recorded by an `EXIT` trap so an install
+that ends in `exit 1` still reports one.
+
+Deployer follows that file. When it is restarted by the update it hands the
+deployment over rather than recording a verdict, and the process that comes back
+picks the same file up, replays everything written while it was gone, and
+finishes the record. The log page reconnects on its own.
+
 ## Adding a host
 
 Deployer generates its own ed25519 keypair on first run and keeps it in its
@@ -135,6 +168,12 @@ Server flags:
 | `-db`   | `DEPLOYER_DB`   | `data/deployer.db` | SQLite path                |
 | `-pin`  | `DEPLOYER_PIN`  | _(empty)_          | optional PIN; empty = open |
 | `-v`    |                 | `false`            | verbose logging            |
+| `-self-user` | `DEPLOYER_SELF_USER` | _(the account Deployer runs as)_ | SSH user for the home host |
+| `-self-repo` | `DEPLOYER_REPO` | `chinmay28/deployer` | repository a self-update builds from |
+| `-self-ref`  | `DEPLOYER_REF`  | `main`             | default ref for a self-update |
+
+The installer sets `DEPLOYER_SELF_USER` to whoever ran it, since the service
+account is a `nologin` user and cannot be SSHed to.
 
 Tests cover the probe parser against realistic and degraded `/proc` output, the
 store, the API handlers, and — where a local `sshd` can be started — real SSH
@@ -172,6 +211,8 @@ codes, cancellation, log streaming and health checks.
 | `GET`    | `/api/deployments/{id}`             | one deployment, with its log         |
 | `GET`    | `/api/deployments/{id}/stream`      | live log as server-sent events       |
 | `POST`   | `/api/deployments/{id}/cancel`      | stop a running deployment            |
+| `GET`    | `/api/self`                         | version, home host, update readiness |
+| `POST`   | `/api/self/update`                  | update Deployer on the home host     |
 
 ## Layout
 
@@ -183,6 +224,7 @@ server/
   internal/sshx/     Deployer's keypair and SSH connections
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
+  internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate
   internal/web/      serves the embedded PWA

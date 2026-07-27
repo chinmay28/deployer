@@ -14,15 +14,22 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
+// SelfIdentifier recognises the machine Deployer itself is running on.
+type SelfIdentifier interface {
+	IsSelf(machineID string) bool
+}
+
 // Service connects to hosts using Deployer's SSH identity.
 type Service struct {
 	db       *store.DB
+	self     SelfIdentifier
 	identity atomic.Pointer[sshx.Identity]
 }
 
-// NewService builds a Service around the given identity.
-func NewService(db *store.DB, id *sshx.Identity) *Service {
-	s := &Service{db: db}
+// NewService builds a Service around the given identity. self may be nil, in
+// which case no host is ever tagged as the home host.
+func NewService(db *store.DB, id *sshx.Identity, self SelfIdentifier) *Service {
+	s := &Service{db: db, self: self}
 	s.identity.Store(id)
 	return s
 }
@@ -70,6 +77,12 @@ func (s *Service) Probe(ctx context.Context, h *store.Host) (*metrics.Probe, err
 		s.recordFailure(ctx, h, err)
 		return nil, err
 	}
+	// The machine id is what identifies the home host: the same machine can be
+	// reached as 127.0.0.1, as a LAN address or as nakedpi.local, and all three
+	// should be recognised.
+	if s.self != nil {
+		probe.Facts.IsSelf = s.self.IsSelf(probe.Facts.MachineID)
+	}
 	if err := s.db.MarkHostOnline(ctx, h.ID, probe.Facts); err != nil {
 		return nil, err
 	}
@@ -96,6 +109,7 @@ type TestResult struct {
 	OK       bool     `json:"ok"`
 	Error    string   `json:"error,omitempty"`
 	SudoOK   bool     `json:"sudoOk"`
+	IsSelf   bool     `json:"isSelf"`
 	Hostname string   `json:"hostname,omitempty"`
 	OS       string   `json:"os,omitempty"`
 	Kernel   string   `json:"kernel,omitempty"`
@@ -123,6 +137,7 @@ func (s *Service) Test(ctx context.Context, h *store.Host) *TestResult {
 	res := &TestResult{
 		OK:       true,
 		SudoOK:   probe.Facts.SudoOK,
+		IsSelf:   probe.Facts.IsSelf,
 		Hostname: probe.Facts.Hostname,
 		OS:       probe.Facts.OS,
 		Kernel:   probe.Facts.Kernel,

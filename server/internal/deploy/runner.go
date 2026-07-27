@@ -50,9 +50,15 @@ func NewRunner(db *store.DB, h *hosts.Service, health *Checker, log *slog.Logger
 // Run is a deployment in flight, with its output fanned out to subscribers.
 type Run struct {
 	ID int64
+	// detached marks a run whose command lives on the host rather than in this
+	// process, so a shutdown must leave it alone.
+	detached bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
+	// abandon tells a detached follower to stop watching without recording an
+	// outcome, so the next process owns the deployment outright.
+	abandon chan struct{}
 
 	mu        sync.Mutex
 	buf       []byte
@@ -62,10 +68,11 @@ type Run struct {
 
 func newRun(id int64, cancel context.CancelFunc) *Run {
 	return &Run{
-		ID:     id,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		subs:   map[chan []byte]bool{},
+		ID:      id,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		abandon: make(chan struct{}),
+		subs:    map[chan []byte]bool{},
 	}
 }
 
@@ -173,6 +180,22 @@ func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[
 		return nil, err
 	}
 
+	// Updating Deployer on the machine Deployer runs on restarts the process
+	// watching the deployment, so that one runs detached and is followed
+	// through a file on the host. The log path needs the id, which only exists
+	// once the row does.
+	detached := app.SelfUpdate && host.IsSelf
+	if detached {
+		dep.DetachedLog = detachedLogPath(dep.ID)
+		if err := rn.db.SetDetachedLog(ctx, dep.ID, dep.DetachedLog); err != nil {
+			rn.mu.Lock()
+			delete(rn.busy, key)
+			rn.mu.Unlock()
+			return nil, err
+		}
+		dep.AppName, dep.HostName = app.Name, host.Name
+	}
+
 	// The deployment outlives the request that started it.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), Timeout)
 	run := newRun(dep.ID, cancel)
@@ -182,7 +205,12 @@ func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[
 	rn.active[dep.ID] = run
 	rn.mu.Unlock()
 
-	go rn.execute(runCtx, cancel, run, app, host, dep, params)
+	if detached {
+		run.detached = true
+		go rn.runDetached(runCtx, cancel, run, dep, host, false)
+	} else {
+		go rn.execute(runCtx, cancel, run, app, host, dep, params)
+	}
 	return dep, nil
 }
 
@@ -290,15 +318,35 @@ func (rn *Runner) Cancel(deploymentID int64) error {
 	return nil
 }
 
-// Shutdown cancels every in-flight deployment and waits for them to record
-// their outcome.
+// Shutdown cancels in-flight deployments and waits for them to record their
+// outcome.
+//
+// Detached deployments are deliberately left alone. `systemctl restart
+// deployer` — which is what a self-update does — arrives here as a SIGTERM,
+// and cancelling then would mark an update that is running perfectly well on
+// the host as canceled. Leaving the row running is what lets the next process
+// pick it back up.
 func (rn *Runner) Shutdown(ctx context.Context) {
 	rn.mu.Lock()
-	runs := make([]*Run, 0, len(rn.active))
+	var runs, left []*Run
 	for _, r := range rn.active {
+		if r.detached {
+			left = append(left, r)
+			continue
+		}
 		runs = append(runs, r)
 	}
 	rn.mu.Unlock()
+
+	if len(left) > 0 {
+		rn.log.Info("leaving detached deployments running; they resume on restart", "count", len(left))
+		// Stop watching without recording anything. Without this the old
+		// follower and the resumed one would both finalize the same
+		// deployment, and whichever finished last would win.
+		for _, r := range left {
+			close(r.abandon)
+		}
+	}
 
 	for _, r := range runs {
 		r.cancel()

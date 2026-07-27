@@ -30,6 +30,9 @@ type Deployment struct {
 	Log        string            `json:"log,omitempty"`
 	StartedAt  time.Time         `json:"startedAt"`
 	FinishedAt *time.Time        `json:"finishedAt"`
+	// DetachedLog is where the command writes on the host when it has to
+	// outlive Deployer. Empty for ordinary deployments.
+	DetachedLog string `json:"-"`
 
 	// Denormalized for list views.
 	AppName  string `json:"appName,omitempty"`
@@ -40,7 +43,7 @@ type Deployment struct {
 func (d *Deployment) Done() bool { return d.Status != DeployRunning }
 
 const deploymentColumns = `d.id, d.app_id, d.host_id, d.command, d.params, d.status,
-	d.exit_code, d.error, d.started_at, d.finished_at`
+	d.exit_code, d.error, d.started_at, d.finished_at, d.detached_log`
 
 func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deployment, error) {
 	var d Deployment
@@ -50,7 +53,7 @@ func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deploym
 	// Every query joins the app and host names; the log is only worth carrying
 	// when a single deployment was asked for.
 	targets := []any{&d.ID, &d.AppID, &d.HostID, &d.Command, &params, &d.Status,
-		&d.ExitCode, &d.Error, &started, &finished, &appName, &hostName}
+		&d.ExitCode, &d.Error, &started, &finished, &d.DetachedLog, &appName, &hostName}
 	if withLog {
 		targets = append(targets, &d.Log)
 	}
@@ -81,10 +84,10 @@ func (d *DB) CreateDeployment(ctx context.Context, dep *Deployment) (*Deployment
 		return nil, err
 	}
 	res, err := d.sql.ExecContext(ctx, `
-		INSERT INTO deployments (app_id, host_id, command, params, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		INSERT INTO deployments (app_id, host_id, command, params, status, started_at, detached_log)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		dep.AppID, dep.HostID, dep.Command, string(params), DeployRunning,
-		time.Now().UTC().Format(time.RFC3339Nano))
+		time.Now().UTC().Format(time.RFC3339Nano), dep.DetachedLog)
 	if err != nil {
 		return nil, err
 	}
@@ -168,13 +171,14 @@ func (d *DB) ListDeployments(ctx context.Context, f DeploymentFilter) ([]*Deploy
 
 // InterruptRunningDeployments marks deployments that were in flight when the
 // server stopped. Their remote commands may well have completed; the record is
-// honest that Deployer stopped watching.
+// honest that Deployer stopped watching. Detached deployments are left alone:
+// they were designed to outlive Deployer and are resumed instead.
 func (d *DB) InterruptRunningDeployments(ctx context.Context) (int64, error) {
 	res, err := d.sql.ExecContext(ctx, `
 		UPDATE deployments
 		SET status = ?, error = 'Deployer restarted while this deployment was running',
 			finished_at = ?
-		WHERE status = ?`,
+		WHERE status = ? AND detached_log = ''`,
 		DeployInterrupted, time.Now().UTC().Format(time.RFC3339Nano), DeployRunning)
 	if err != nil {
 		return 0, err
@@ -317,4 +321,33 @@ func orEmptyMap(m map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return m
+}
+
+// ResumableDeployments returns detached deployments still marked running: they
+// kept going on the host while Deployer was restarting.
+func (d *DB) ResumableDeployments(ctx context.Context) ([]*Deployment, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT `+deploymentColumns+`, a.name, h.name
+		FROM deployments d
+		JOIN apps a ON a.id = d.app_id
+		JOIN hosts h ON h.id = d.host_id
+		WHERE d.status = ? AND d.detached_log != ''`, DeployRunning)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Deployment{}
+	for rows.Next() {
+		dep, err := scanDeployment(rows, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dep)
+	}
+	return out, rows.Err()
+}
+
+// SetDetachedLog records where a deployment writes its output on the host.
+func (d *DB) SetDetachedLog(ctx context.Context, id int64, path string) error {
+	_, err := d.sql.ExecContext(ctx, `UPDATE deployments SET detached_log = ? WHERE id = ?`, path, id)
+	return err
 }

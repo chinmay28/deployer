@@ -35,10 +35,13 @@ type Host struct {
 	Arch       string     `json:"arch"`
 	SudoOK     bool       `json:"sudoOk"`
 	CreatedAt  time.Time  `json:"createdAt"`
+	// IsSelf marks the machine Deployer itself is running on.
+	IsSelf    bool   `json:"isSelf"`
+	MachineID string `json:"-"`
 }
 
 const hostColumns = `id, name, address, port, username, host_key, status, last_error,
-	last_seen_at, hostname, os, kernel, arch, sudo_ok, created_at`
+	last_seen_at, hostname, os, kernel, arch, sudo_ok, created_at, is_self, machine_id`
 
 func scanHost(row interface{ Scan(...any) error }) (*Host, error) {
 	var h Host
@@ -46,7 +49,7 @@ func scanHost(row interface{ Scan(...any) error }) (*Host, error) {
 	var created string
 	err := row.Scan(&h.ID, &h.Name, &h.Address, &h.Port, &h.Username, &h.HostKey,
 		&h.Status, &h.LastError, &lastSeen, &h.Hostname, &h.OS, &h.Kernel, &h.Arch,
-		&h.SudoOK, &created)
+		&h.SudoOK, &created, &h.IsSelf, &h.MachineID)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -144,15 +147,19 @@ type HostFacts struct {
 	Kernel   string
 	Arch     string
 	SudoOK   bool
+	// MachineID is /etc/machine-id, which is how Deployer recognises the
+	// machine it is running on regardless of the address used to reach it.
+	MachineID string
+	IsSelf    bool
 }
 
 // MarkHostOnline records a successful connection along with the host's facts.
 func (d *DB) MarkHostOnline(ctx context.Context, id int64, f HostFacts) error {
 	_, err := d.sql.ExecContext(ctx, `
 		UPDATE hosts SET status = ?, last_error = '', last_seen_at = datetime('now'),
-			hostname = ?, os = ?, kernel = ?, arch = ?, sudo_ok = ?
+			hostname = ?, os = ?, kernel = ?, arch = ?, sudo_ok = ?, machine_id = ?, is_self = ?
 		WHERE id = ?`,
-		StatusOnline, f.Hostname, f.OS, f.Kernel, f.Arch, f.SudoOK, id)
+		StatusOnline, f.Hostname, f.OS, f.Kernel, f.Arch, f.SudoOK, f.MachineID, f.IsSelf, id)
 	return err
 }
 
@@ -172,4 +179,17 @@ func requireRow(res interface{ RowsAffected() (int64, error) }) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SelfHost returns the host Deployer is running on, if one has been identified.
+func (d *DB) SelfHost(ctx context.Context) (*Host, error) {
+	return scanHost(d.sql.QueryRowContext(ctx,
+		`SELECT `+hostColumns+` FROM hosts WHERE is_self = 1 ORDER BY id LIMIT 1`))
+}
+
+// SetHostSelf marks (or unmarks) a host as the machine Deployer runs on.
+func (d *DB) SetHostSelf(ctx context.Context, id int64, isSelf bool, machineID string) error {
+	_, err := d.sql.ExecContext(ctx,
+		`UPDATE hosts SET is_self = ?, machine_id = ? WHERE id = ?`, isSelf, machineID, id)
+	return err
 }

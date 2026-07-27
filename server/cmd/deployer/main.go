@@ -7,15 +7,18 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
 	"github.com/chinmay28/deployer/server/internal/api"
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hosts"
+	"github.com/chinmay28/deployer/server/internal/selfhost"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
 	"github.com/chinmay28/deployer/server/internal/web"
@@ -33,6 +36,9 @@ func run() error {
 		addr    = flag.String("addr", envOr("DEPLOYER_ADDR", ":8899"), "listen address (host:port)")
 		dbPath  = flag.String("db", envOr("DEPLOYER_DB", "data/deployer.db"), "path to the SQLite database")
 		pin     = flag.String("pin", os.Getenv("DEPLOYER_PIN"), "optional PIN required to use the UI; empty disables authentication")
+		sshUser = flag.String("self-user", os.Getenv("DEPLOYER_SELF_USER"), "SSH user Deployer connects as on its own machine")
+		repo    = flag.String("self-repo", envOr("DEPLOYER_REPO", "chinmay28/deployer"), "repository a self-update builds from")
+		ref     = flag.String("self-ref", envOr("DEPLOYER_REF", "main"), "git ref a self-update builds from by default")
 		verbose = flag.Bool("v", false, "verbose logging")
 	)
 	flag.Parse()
@@ -59,12 +65,21 @@ func run() error {
 	}
 	log.Info("ssh identity ready", "fingerprint", identity.Fingerprint())
 
-	hostSvc := hosts.NewService(db, identity)
+	self := selfhost.New(db, selfhost.Config{
+		SSHUser: *sshUser,
+		Port:    portOf(*addr),
+		Repo:    *repo,
+		Ref:     *ref,
+	}, log)
+	self.Ensure(ctx)
+
+	hostSvc := hosts.NewService(db, identity, self)
 	poller := hosts.NewPoller(hostSvc, db, log)
 	go poller.Run(ctx)
 
-	// Deployments cannot survive a restart, so make sure none are left
-	// claiming to be running.
+	// An ordinary deployment dies with the process that was watching it, so
+	// none should be left claiming to be running. Detached ones are exempt:
+	// they keep going on the host and are resumed below.
 	if n, err := db.InterruptRunningDeployments(ctx); err != nil {
 		return err
 	} else if n > 0 {
@@ -76,9 +91,14 @@ func run() error {
 	runner := deploy.NewRunner(db, hostSvc, health, log)
 
 	auth := api.NewPinAuth(*pin)
+	// Deployments that were left running are either resumable (they outlive a
+	// restart on purpose) or genuinely interrupted.
+	runner.ResumeDetached(ctx)
+
 	apiSrv := &api.Server{
 		DB: db, Hosts: hostSvc, Poller: poller,
 		Runner: runner, Health: health, Log: log, Auth: auth,
+		Self: self, Version: version(), SelfRef: *ref,
 	}
 
 	mux := http.NewServeMux()
@@ -121,6 +141,38 @@ func authMode(a *api.PinAuth) string {
 		return "none"
 	}
 	return "pin"
+}
+
+// portOf pulls the port out of a listen address for the self health check.
+func portOf(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "8899"
+	}
+	return port
+}
+
+// version reports the build this binary came from. The linker stamps it during
+// a release build; otherwise it comes from the VCS stamp Go records.
+var buildVersion string
+
+func version() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			if len(setting.Value) > 12 {
+				return setting.Value[:12]
+			}
+			return setting.Value
+		}
+	}
+	return "unknown"
 }
 
 func envOr(key, fallback string) string {

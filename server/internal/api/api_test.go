@@ -31,7 +31,7 @@ func testServer(t *testing.T, pin string) (*Server, http.Handler) {
 		t.Fatalf("ensure identity: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := hosts.NewService(db, id)
+	svc := hosts.NewService(db, id, nil)
 	health := deploy.NewChecker(db, svc, log)
 	s := &Server{
 		DB:     db,

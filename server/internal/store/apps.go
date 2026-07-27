@@ -43,15 +43,19 @@ type App struct {
 	HealthType     string    `json:"healthType"`
 	HealthTarget   string    `json:"healthTarget"`
 	CreatedAt      time.Time `json:"createdAt"`
+	// SelfUpdate marks the app that installs Deployer itself. Deploying it to
+	// the home host restarts the process running the deployment, so it runs
+	// detached and is picked back up afterwards.
+	SelfUpdate bool `json:"selfUpdate"`
 }
 
-const appColumns = `id, name, description, install_command, params, health_type, health_target, created_at`
+const appColumns = `id, name, description, install_command, params, health_type, health_target, created_at, self_update`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
 	var params, created string
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.InstallCommand, &params,
-		&a.HealthType, &a.HealthTarget, &created)
+		&a.HealthType, &a.HealthTarget, &created, &a.SelfUpdate)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -96,9 +100,9 @@ func (d *DB) CreateApp(ctx context.Context, a *App) (*App, error) {
 		return nil, err
 	}
 	res, err := d.sql.ExecContext(ctx, `
-		INSERT INTO apps (name, description, install_command, params, health_type, health_target)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.InstallCommand, string(params), a.HealthType, a.HealthTarget)
+		INSERT INTO apps (name, description, install_command, params, health_type, health_target, self_update)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.InstallCommand, string(params), a.HealthType, a.HealthTarget, a.SelfUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -140,4 +144,10 @@ func orEmptyParams(p []Param) []Param {
 		return []Param{}
 	}
 	return p
+}
+
+// SelfUpdateApp returns the app that installs Deployer itself, if it exists.
+func (d *DB) SelfUpdateApp(ctx context.Context) (*App, error) {
+	return scanApp(d.sql.QueryRowContext(ctx,
+		`SELECT `+appColumns+` FROM apps WHERE self_update = 1 ORDER BY id LIMIT 1`))
 }

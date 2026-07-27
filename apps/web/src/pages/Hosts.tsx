@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
-import { HostBadge } from '../components/status'
+import { HomeBadge, HostBadge } from '../components/status'
 import { Banner, Empty, useLoader } from '../components/ui'
 import { ago } from '../lib/format'
 
@@ -41,9 +41,13 @@ export default function Hosts() {
                 {host.port !== 22 ? `:${host.port}` : ''}
               </div>
             </div>
-            <HostBadge status={host.status} />
+            <div className="row" style={{ gap: 6 }}>
+              {host.isSelf && <HomeBadge />}
+              <HostBadge status={host.status} />
+            </div>
           </div>
           <div className="sub" style={{ marginTop: 8 }}>
+            {host.isSelf ? 'Deployer runs here · ' : ''}
             {host.os ? `${host.os} · ${host.arch}` : 'Not yet identified'} · seen {ago(host.lastSeenAt)}
           </div>
         </Link>

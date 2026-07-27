@@ -178,9 +178,18 @@ func writeSSELog(w http.ResponseWriter, text string) {
 }
 
 // writeSSEStatus emits the final state of the deployment and ends the stream.
+//
+// A deployment that is still running when its run ends has been handed over —
+// a detached self-update whose Deployer is restarting. Saying "status: running"
+// would look terminal to the client, so nothing is sent and the stream simply
+// closes; the browser reconnects and picks up whichever process owns it next.
 func (s *Server) writeSSEStatus(w http.ResponseWriter, r *http.Request, id int64) {
 	dep, err := s.DB.GetDeployment(r.Context(), id)
 	if err != nil {
+		return
+	}
+	if dep.Status == store.DeployRunning {
+		fmt.Fprint(w, "event: handover\ndata: {}\n\n")
 		return
 	}
 	payload := map[string]any{

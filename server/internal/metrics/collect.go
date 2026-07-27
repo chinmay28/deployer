@@ -24,6 +24,8 @@ uname -m 2>/dev/null || echo unknown
 (. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-${NAME:-unknown}}")
 printf '@@sudo\n'
 if sudo -n true 2>/dev/null; then echo yes; else echo no; fi
+printf '@@machineid\n'
+cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || true
 printf '@@cpu1\n'
 grep '^cpu ' /proc/stat
 printf '@@uptime\n'
@@ -78,6 +80,9 @@ func parseProbe(out string) (*Probe, error) {
 		p.Facts.OS = strings.Trim(facts[3], `"`)
 	}
 	p.Facts.SudoOK = len(sections["sudo"]) > 0 && sections["sudo"][0] == "yes"
+	if id := sections["machineid"]; len(id) > 0 {
+		p.Facts.MachineID = strings.TrimSpace(id[0])
+	}
 
 	if cpu1, cpu2 := sections["cpu1"], sections["cpu2"]; len(cpu1) > 0 && len(cpu2) > 0 {
 		p.Sample.CPUPct = cpuUsage(cpu1[0], cpu2[0])
