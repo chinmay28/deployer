@@ -62,6 +62,18 @@ export function time(iso: string): string {
   })
 }
 
+/**
+ * shellQuote mirrors the server's quoting so the preview shows exactly what
+ * will run: ordinary values are left alone, anything the shell could act on is
+ * wrapped in single quotes. Keep this in step with deploy.ShellQuote.
+ */
+const shellSafe = /^[A-Za-z0-9._:/@=+,-]+$/
+
+export function shellQuote(value: string): string {
+  if (shellSafe.test(value)) return value
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
 /** severity turns a usage percentage into a bar colour class. */
 export function severity(pct: number): '' | 'warn' | 'bad' {
   if (pct >= 90) return 'bad'
