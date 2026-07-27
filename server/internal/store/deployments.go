@@ -1,0 +1,317 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"strings"
+	"time"
+)
+
+// Deployment statuses.
+const (
+	DeployRunning     = "running"
+	DeploySucceeded   = "succeeded"
+	DeployFailed      = "failed"
+	DeployCanceled    = "canceled"
+	DeployInterrupted = "interrupted" // the server stopped while it was running
+)
+
+// Deployment is one run of an app's install command on a host.
+type Deployment struct {
+	ID         int64             `json:"id"`
+	AppID      int64             `json:"appId"`
+	HostID     int64             `json:"hostId"`
+	Command    string            `json:"command"`
+	Params     map[string]string `json:"params"`
+	Status     string            `json:"status"`
+	ExitCode   *int              `json:"exitCode"`
+	Error      string            `json:"error"`
+	Log        string            `json:"log,omitempty"`
+	StartedAt  time.Time         `json:"startedAt"`
+	FinishedAt *time.Time        `json:"finishedAt"`
+
+	// Denormalized for list views.
+	AppName  string `json:"appName,omitempty"`
+	HostName string `json:"hostName,omitempty"`
+}
+
+// Done reports whether the deployment has stopped running.
+func (d *Deployment) Done() bool { return d.Status != DeployRunning }
+
+const deploymentColumns = `d.id, d.app_id, d.host_id, d.command, d.params, d.status,
+	d.exit_code, d.error, d.started_at, d.finished_at`
+
+func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deployment, error) {
+	var d Deployment
+	var params, started string
+	var finished sql.NullString
+	var appName, hostName sql.NullString
+	targets := []any{&d.ID, &d.AppID, &d.HostID, &d.Command, &params, &d.Status,
+		&d.ExitCode, &d.Error, &started, &finished}
+	if withLog {
+		targets = append(targets, &d.Log)
+	} else {
+		targets = append(targets, &appName, &hostName)
+	}
+	if err := row.Scan(targets...); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	d.Params = map[string]string{}
+	_ = json.Unmarshal([]byte(params), &d.Params)
+	if t, err := parseSQLiteTime(started); err == nil {
+		d.StartedAt = t
+	}
+	if finished.Valid {
+		if t, err := parseSQLiteTime(finished.String); err == nil {
+			d.FinishedAt = &t
+		}
+	}
+	d.AppName, d.HostName = appName.String, hostName.String
+	return &d, nil
+}
+
+// CreateDeployment records a deployment that is about to start.
+func (d *DB) CreateDeployment(ctx context.Context, dep *Deployment) (*Deployment, error) {
+	params, err := json.Marshal(orEmptyMap(dep.Params))
+	if err != nil {
+		return nil, err
+	}
+	res, err := d.sql.ExecContext(ctx, `
+		INSERT INTO deployments (app_id, host_id, command, params, status, started_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		dep.AppID, dep.HostID, dep.Command, string(params), DeployRunning,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return d.GetDeployment(ctx, id)
+}
+
+// FinishDeployment records the outcome and the captured log.
+func (d *DB) FinishDeployment(ctx context.Context, id int64, status string, exitCode *int, errMsg, log string) error {
+	res, err := d.sql.ExecContext(ctx, `
+		UPDATE deployments SET status = ?, exit_code = ?, error = ?, log = ?, finished_at = ?
+		WHERE id = ?`,
+		status, exitCode, errMsg, log, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// GetDeployment returns one deployment including its log.
+func (d *DB) GetDeployment(ctx context.Context, id int64) (*Deployment, error) {
+	row := d.sql.QueryRowContext(ctx,
+		`SELECT `+deploymentColumns+`, d.log FROM deployments d WHERE d.id = ?`, id)
+	return scanDeployment(row, true)
+}
+
+// DeploymentFilter narrows a deployment listing.
+type DeploymentFilter struct {
+	AppID  int64
+	HostID int64
+	Limit  int
+}
+
+// ListDeployments returns deployments newest first, without their logs.
+func (d *DB) ListDeployments(ctx context.Context, f DeploymentFilter) ([]*Deployment, error) {
+	where := []string{}
+	args := []any{}
+	if f.AppID > 0 {
+		where = append(where, "d.app_id = ?")
+		args = append(args, f.AppID)
+	}
+	if f.HostID > 0 {
+		where = append(where, "d.host_id = ?")
+		args = append(args, f.HostID)
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	q := `SELECT ` + deploymentColumns + `, a.name, h.name
+		FROM deployments d
+		JOIN apps a ON a.id = d.app_id
+		JOIN hosts h ON h.id = d.host_id`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY d.started_at DESC, d.id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := d.sql.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Deployment{}
+	for rows.Next() {
+		dep, err := scanDeployment(rows, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dep)
+	}
+	return out, rows.Err()
+}
+
+// InterruptRunningDeployments marks deployments that were in flight when the
+// server stopped. Their remote commands may well have completed; the record is
+// honest that Deployer stopped watching.
+func (d *DB) InterruptRunningDeployments(ctx context.Context) (int64, error) {
+	res, err := d.sql.ExecContext(ctx, `
+		UPDATE deployments
+		SET status = ?, error = 'Deployer restarted while this deployment was running',
+			finished_at = ?
+		WHERE status = ?`,
+		DeployInterrupted, time.Now().UTC().Format(time.RFC3339Nano), DeployRunning)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// Installation is an app that has been deployed to a host at least once.
+type Installation struct {
+	ID               int64             `json:"id"`
+	AppID            int64             `json:"appId"`
+	HostID           int64             `json:"hostId"`
+	Params           map[string]string `json:"params"`
+	LastDeploymentID *int64            `json:"lastDeploymentId"`
+	HealthStatus     string            `json:"healthStatus"`
+	HealthDetail     string            `json:"healthDetail"`
+	HealthCheckedAt  *time.Time        `json:"healthCheckedAt"`
+	InstalledAt      time.Time         `json:"installedAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+
+	// Denormalized for list views.
+	AppName      string `json:"appName,omitempty"`
+	HostName     string `json:"hostName,omitempty"`
+	HostAddress  string `json:"hostAddress,omitempty"`
+	HealthType   string `json:"healthType,omitempty"`
+	HealthTarget string `json:"healthTarget,omitempty"`
+	LastStatus   string `json:"lastStatus,omitempty"`
+}
+
+const installationColumns = `i.id, i.app_id, i.host_id, i.params, i.last_deployment_id,
+	i.health_status, i.health_detail, i.health_checked_at, i.installed_at, i.updated_at,
+	a.name, h.name, h.address, a.health_type, a.health_target,
+	COALESCE((SELECT status FROM deployments WHERE id = i.last_deployment_id), '')`
+
+const installationJoin = `FROM installations i
+	JOIN apps a ON a.id = i.app_id
+	JOIN hosts h ON h.id = i.host_id`
+
+func scanInstallation(row interface{ Scan(...any) error }) (*Installation, error) {
+	var in Installation
+	var params, installed, updated string
+	var checked sql.NullString
+	err := row.Scan(&in.ID, &in.AppID, &in.HostID, &params, &in.LastDeploymentID,
+		&in.HealthStatus, &in.HealthDetail, &checked, &installed, &updated,
+		&in.AppName, &in.HostName, &in.HostAddress, &in.HealthType, &in.HealthTarget,
+		&in.LastStatus)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	in.Params = map[string]string{}
+	_ = json.Unmarshal([]byte(params), &in.Params)
+	if t, err := parseSQLiteTime(installed); err == nil {
+		in.InstalledAt = t
+	}
+	if t, err := parseSQLiteTime(updated); err == nil {
+		in.UpdatedAt = t
+	}
+	if checked.Valid {
+		if t, err := parseSQLiteTime(checked.String); err == nil {
+			in.HealthCheckedAt = &t
+		}
+	}
+	return &in, nil
+}
+
+// ListInstallations returns every app/host pair Deployer has deployed.
+func (d *DB) ListInstallations(ctx context.Context) ([]*Installation, error) {
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT `+installationColumns+` `+installationJoin+` ORDER BY a.name, h.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Installation{}
+	for rows.Next() {
+		in, err := scanInstallation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, in)
+	}
+	return out, rows.Err()
+}
+
+// GetInstallation returns one installation by id.
+func (d *DB) GetInstallation(ctx context.Context, id int64) (*Installation, error) {
+	return scanInstallation(d.sql.QueryRowContext(ctx,
+		`SELECT `+installationColumns+` `+installationJoin+` WHERE i.id = ?`, id))
+}
+
+// UpsertInstallation records a successful deployment against an app/host pair,
+// remembering the parameters so the next deploy can prefill them.
+func (d *DB) UpsertInstallation(ctx context.Context, appID, hostID int64, params map[string]string, deploymentID int64) error {
+	encoded, err := json.Marshal(orEmptyMap(params))
+	if err != nil {
+		return err
+	}
+	_, err = d.sql.ExecContext(ctx, `
+		INSERT INTO installations (app_id, host_id, params, last_deployment_id, updated_at)
+		VALUES (?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(app_id, host_id) DO UPDATE SET
+			params = excluded.params,
+			last_deployment_id = excluded.last_deployment_id,
+			updated_at = excluded.updated_at`,
+		appID, hostID, string(encoded), deploymentID)
+	return err
+}
+
+// DeleteInstallation forgets an installation. It does not uninstall anything on
+// the host.
+func (d *DB) DeleteInstallation(ctx context.Context, id int64) error {
+	res, err := d.sql.ExecContext(ctx, `DELETE FROM installations WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	return requireRow(res)
+}
+
+// SetInstallationHealth records the result of a health check.
+func (d *DB) SetInstallationHealth(ctx context.Context, id int64, status, detail string) error {
+	_, err := d.sql.ExecContext(ctx, `
+		UPDATE installations SET health_status = ?, health_detail = ?, health_checked_at = ?
+		WHERE id = ?`,
+		status, detail, time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
+}
+
+// FindInstallation looks up an installation by app and host.
+func (d *DB) FindInstallation(ctx context.Context, appID, hostID int64) (*Installation, error) {
+	return scanInstallation(d.sql.QueryRowContext(ctx,
+		`SELECT `+installationColumns+` `+installationJoin+` WHERE i.app_id = ? AND i.host_id = ?`,
+		appID, hostID))
+}
+
+func orEmptyMap(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}

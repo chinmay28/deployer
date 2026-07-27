@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chinmay28/deployer/server/internal/api"
+	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hosts"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
@@ -62,8 +63,23 @@ func run() error {
 	poller := hosts.NewPoller(hostSvc, db, log)
 	go poller.Run(ctx)
 
+	// Deployments cannot survive a restart, so make sure none are left
+	// claiming to be running.
+	if n, err := db.InterruptRunningDeployments(ctx); err != nil {
+		return err
+	} else if n > 0 {
+		log.Warn("marked deployments as interrupted after restart", "count", n)
+	}
+
+	health := deploy.NewChecker(db, hostSvc, log)
+	go health.Run(ctx)
+	runner := deploy.NewRunner(db, hostSvc, health, log)
+
 	auth := api.NewPinAuth(*pin)
-	apiSrv := &api.Server{DB: db, Hosts: hostSvc, Poller: poller, Log: log, Auth: auth}
+	apiSrv := &api.Server{
+		DB: db, Hosts: hostSvc, Poller: poller,
+		Runner: runner, Health: health, Log: log, Auth: auth,
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiSrv.Routes())
@@ -92,8 +108,11 @@ func run() error {
 		log.Info("shutting down")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Stop in-flight deployments first so each one records an outcome instead
+	// of being left as "running" in the database.
+	runner.Shutdown(shutdownCtx)
 	return srv.Shutdown(shutdownCtx)
 }
 
