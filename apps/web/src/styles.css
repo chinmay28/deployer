@@ -54,6 +54,16 @@ body,
   height: 100%;
 }
 
+/* On a page short enough not to scroll, iOS anchors position: fixed to a
+   layout viewport that is short by the top inset, which left the tab bar
+   floating above the screen edge on Hosts and Apps while the taller Overview
+   and Settings sat flush. Making the document that much taller than the
+   viewport keeps every page in the state iOS measures correctly; it is a no-op
+   where there is no inset. */
+html {
+  min-height: calc(100% + env(safe-area-inset-top, 0px));
+}
+
 body {
   margin: 0;
   background: var(--bg);
