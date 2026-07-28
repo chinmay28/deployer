@@ -1,22 +1,50 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { APP_VERSION } from '../version'
 
-/** Page gives every screen the same sticky header and scroll area. */
+/** How long the developer badge stays on screen when the header mark is
+ * tapped. Kept in sync with the `dev-flash*` animations in styles.css — the CSS
+ * fades out on its own clock, this unmounts it afterwards. */
+const DEV_FLASH_MS = 3000
+
+/** The header the four tabs share. App renders it once, outside the routes, so
+ * moving between tabs leaves the brand lockup and the developer mark exactly
+ * where they were instead of rebuilding an identical header. Which tab you are
+ * on is the tab bar's job to say; the header's job is to stay put. */
+export function AppHeader({ action }: { action?: ReactNode }) {
+  return (
+    <header className="header">
+      <img className="brand-logo" src="/icon.svg" alt="" aria-hidden="true" />
+      {/* Name over version, as a lockup — the version reads as part of the
+          name rather than as another thing on the screen. */}
+      <div className="brand">
+        <h1>Deployer</h1>
+        <span className="brand-version">{APP_VERSION}</span>
+      </div>
+      {action}
+      <DevMark />
+    </header>
+  )
+}
+
+/** The body of a tab root. Its header belongs to the shell, so a tab supplies
+ * content only. */
+export function TabPage({ children }: { children: ReactNode }) {
+  return <main className="main">{children}</main>
+}
+
+/** Page gives a pushed screen — a host, an app, a form — its own sticky header:
+ * the way back, what you tapped into, and its action. */
 export function Page({
   title,
   back,
   action,
-  brand,
   children,
 }: {
   title: string
-  /** Path to go back to; omitted on the four tab roots. */
+  /** Path to go back to; omitted where there is nothing to go back to. */
   back?: string
   action?: ReactNode
-  /** Show the app icon and the running version alongside the title. Only the
-   * Overview does: it is the screen whose title *is* the app's name. */
-  brand?: boolean
   children: ReactNode
 }) {
   const navigate = useNavigate()
@@ -28,22 +56,56 @@ export function Page({
             ‹ Back
           </button>
         )}
-        {brand ? (
-          <>
-            <img className="brand-logo" src="/icon.svg" alt="" aria-hidden="true" />
-            {/* Name over version, as a lockup — the version reads as part of
-                the name rather than as another thing on the screen. */}
-            <div className="brand">
-              <h1>{title}</h1>
-              <span className="brand-version">{APP_VERSION}</span>
-            </div>
-          </>
-        ) : (
-          <h1>{title}</h1>
-        )}
+        <h1>{title}</h1>
         {action}
       </header>
       <main className="main">{children}</main>
+    </>
+  )
+}
+
+/** The developer mark at the end of the shared header: a small dark disk that
+ * throws the full badge over the app for a moment when it is tapped.
+ * Deliberately a button rather than a link — it goes nowhere. */
+function DevMark() {
+  const [flash, setFlash] = useState(false)
+
+  useEffect(() => {
+    if (!flash) return
+
+    const timer = window.setTimeout(() => setFlash(false), DEV_FLASH_MS)
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFlash(false)
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [flash])
+
+  return (
+    <>
+      <button
+        type="button"
+        className="dev"
+        title="Built by CM Hegday · 0x434d"
+        aria-label="Show the developer badge"
+        onClick={() => setFlash(true)}
+      >
+        <img className="dev-logo" src="/dev-badge.png" alt="" aria-hidden="true" />
+      </button>
+
+      {flash && (
+        <div className="dev-flash" role="presentation" onClick={() => setFlash(false)}>
+          <img
+            className="dev-flash-logo"
+            src="/dev-badge-full.png"
+            alt="Built by CM Hegday — 0x434d"
+          />
+        </div>
+      )}
     </>
   )
 }

@@ -7,7 +7,16 @@ const SHELL_CACHE = 'deployer-shell-v1'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(['/', '/icon.svg', '/manifest.webmanifest'])),
+    caches.open(SHELL_CACHE).then((cache) =>
+      cache.addAll([
+        '/',
+        '/icon.svg',
+        '/manifest.webmanifest',
+        // Part of the chrome, so it must not be a hole when the app opens offline.
+        '/dev-badge.png',
+        '/dev-badge-full.png',
+      ]),
+    ),
   )
   self.skipWaiting()
 })

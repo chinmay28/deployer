@@ -179,9 +179,9 @@ on the 0.1 line. Major and minor are constants in
 
 The patch number only exists at build time, so `scripts/version.mjs` works it
 out once and both halves of the build take it from there: the linker stamps it
-into the binary, Vite inlines it into the bundle. The Overview header shows what
-the PWA was built as, Settings and `/api/health` show what the binary was, and
-they agree because a build makes both together.
+into the binary, Vite inlines it into the bundle. The app header shows what the
+PWA was built as, Settings and `/api/health` show what the binary was, and they
+agree because a build makes both together.
 
 A version ending in `.0` is an unstamped build rather than a release — a bare
 `go build`, or a build where git couldn't be asked. That includes a **shallow**
