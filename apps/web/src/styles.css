@@ -107,6 +107,37 @@ body {
   white-space: nowrap;
 }
 
+/* The brand lockup on the Overview header: the app icon, then the name over the
+   running build. `brand` takes over the h1's job of soaking up the free space. */
+.header .brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: block;
+  flex: none;
+}
+
+.header .brand {
+  flex: 1;
+  min-width: 0;
+}
+
+.header .brand h1 {
+  flex: none;
+  line-height: 1.15;
+}
+
+/* The running build, MAJOR.MINOR.<commit count> — see src/version.ts. Tabular
+   figures so the number doesn't shimmy as the patch count rolls over. */
+.header .brand-version {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
 .header .back {
   background: none;
   border: none;

@@ -1,0 +1,56 @@
+package version
+
+import (
+	"os"
+	"regexp"
+	"strconv"
+	"testing"
+)
+
+func TestStringIsUnstampedByDefault(t *testing.T) {
+	// The zero-configuration build — `go test`, or a bare `go build` — must be
+	// visibly a development build rather than claim to be patch release 1.
+	if Patch != "0" {
+		t.Fatalf("Patch = %q, want the unstamped default", Patch)
+	}
+	if got, want := String(), "v0.1.0"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	if Stamped() {
+		t.Error("Stamped() = true on an unstamped build")
+	}
+}
+
+func TestStringUsesTheStampedPatch(t *testing.T) {
+	t.Cleanup(func() { Patch = "0" })
+	Patch = "42"
+	if got, want := String(), "v0.1.42"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	if !Stamped() {
+		t.Error("Stamped() = false with a patch number stamped in")
+	}
+}
+
+// scripts/version.mjs reads Major and Minor out of this package's source so
+// that the PWA and the binary can't disagree about them, which makes the *shape*
+// of those two lines part of the contract. This is the test that notices when a
+// reformat — a shared const line, a comment on the end — breaks the script.
+func TestMajorMinorStayReadableToTheBuildScript(t *testing.T) {
+	src, err := os.ReadFile("version.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]int{"Major": Major, "Minor": Minor} {
+		// The same pattern scripts/version.mjs applies.
+		re := regexp.MustCompile(`(?m)^[ \t]*` + name + `[ \t]*=[ \t]*(\d+)[ \t]*$`)
+		m := re.FindSubmatch(src)
+		if m == nil {
+			t.Errorf("scripts/version.mjs could not find %s in version.go", name)
+			continue
+		}
+		if got, _ := strconv.Atoi(string(m[1])); got != want {
+			t.Errorf("%s reads as %d, but the constant is %d", name, got, want)
+		}
+	}
+}

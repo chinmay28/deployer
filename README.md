@@ -166,7 +166,27 @@ make test           # Go tests, including SSH integration tests where sshd exist
 make test-installer # install, upgrade, rollback and uninstall, in a sandbox
 
 cd apps/web && npm run dev   # Vite dev server, proxying /api to :8899
+
+make version        # print the version this tree would build as
 ```
+
+### Versioning
+
+The version is `vMAJOR.MINOR.PATCH`, where the patch number is the repository's
+commit count — every commit is a patch release, so `v0.1.42` is the 42nd commit
+on the 0.1 line. Major and minor are constants in
+`server/internal/version/version.go`, bumped by hand.
+
+The patch number only exists at build time, so `scripts/version.mjs` works it
+out once and both halves of the build take it from there: the linker stamps it
+into the binary, Vite inlines it into the bundle. The Overview header shows what
+the PWA was built as, Settings and `/api/health` show what the binary was, and
+they agree because a build makes both together.
+
+A version ending in `.0` is an unstamped build rather than a release — a bare
+`go build`, or a build where git couldn't be asked. That includes a **shallow**
+clone, which is why the installer clones with `--filter=blob:none` instead of
+`--depth 1`: cheap, but with the whole commit graph.
 
 Server flags:
 
@@ -192,7 +212,7 @@ codes, cancellation, log streaming and health checks.
 
 | Method   | Path                                | Purpose                              |
 | -------- | ----------------------------------- | ------------------------------------ |
-| `GET`    | `/api/health`                       | liveness                             |
+| `GET`    | `/api/health`                       | liveness, and the running version    |
 | `GET`    | `/api/overview`                     | everything the dashboard needs       |
 | `GET`    | `/api/session`                      | whether a PIN is required            |
 | `POST`   | `/api/session`                      | exchange a PIN for a session cookie  |
@@ -235,7 +255,8 @@ server/
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate
+  internal/version/  the version number, and where MAJOR.MINOR is declared
   internal/web/      serves the embedded PWA
 apps/web/            the PWA: React, Vite, no UI framework
-scripts/             the installer and its test harness
+scripts/             the installer, its test harness, and version.mjs
 ```
