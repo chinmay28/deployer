@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { Link, Route, Routes, useLocation } from 'react-router-dom'
-import { AppHeader, TabBar } from './components/Layout'
+import { Route, Routes, useLocation } from 'react-router-dom'
+import { AppHeader, Fab, TabBar } from './components/Layout'
 import AppForm from './pages/AppForm'
 import AppDetail from './pages/AppDetail'
 import Apps from './pages/Apps'
@@ -12,32 +12,24 @@ import NotFound from './pages/NotFound'
 import Overview from './pages/Overview'
 import Settings from './pages/Settings'
 
-/** The four tab roots, and the action each one carries in the shared header.
- * Keyed by path because the header is rendered outside the routes: that is what
- * keeps it on screen, untouched, as you move between tabs. Pushed screens bring
- * their own header instead — see Page. */
-const TAB_ACTIONS: Record<string, ReactNode> = {
+/** The four tab roots, and the floating add button each one carries. Keyed by
+ * path because both the header and the button are rendered outside the routes:
+ * that is what keeps them on screen, untouched, as you move between tabs.
+ * Pushed screens bring their own header instead — see Page. */
+const TAB_FABS: Record<string, ReactNode> = {
   '/': null,
-  '/hosts': (
-    <Link to="/hosts/new">
-      <button className="ghost">Add</button>
-    </Link>
-  ),
-  '/apps': (
-    <Link to="/apps/new">
-      <button className="ghost">Add</button>
-    </Link>
-  ),
+  '/hosts': <Fab to="/hosts/new" label="Add a host" />,
+  '/apps': <Fab to="/apps/new" label="Add an app" />,
   '/settings': null,
 }
 
 export default function App() {
   const { pathname } = useLocation()
-  const onTab = Object.prototype.hasOwnProperty.call(TAB_ACTIONS, pathname)
+  const onTab = Object.prototype.hasOwnProperty.call(TAB_FABS, pathname)
 
   return (
     <div className="app">
-      {onTab && <AppHeader action={TAB_ACTIONS[pathname]} />}
+      {onTab && <AppHeader />}
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="/hosts" element={<Hosts />} />
@@ -52,6 +44,7 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      {onTab && TAB_FABS[pathname]}
       <TabBar />
     </div>
   )

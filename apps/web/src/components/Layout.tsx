@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { createPortal } from 'react-dom'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { APP_VERSION } from '../version'
 
 /** How long the developer badge stays on screen when the header mark is
@@ -10,8 +11,10 @@ const DEV_FLASH_MS = 3000
 /** The header the four tabs share. App renders it once, outside the routes, so
  * moving between tabs leaves the brand lockup and the developer mark exactly
  * where they were instead of rebuilding an identical header. Which tab you are
- * on is the tab bar's job to say; the header's job is to stay put. */
-export function AppHeader({ action }: { action?: ReactNode }) {
+ * on is the tab bar's job to say; the header's job is to stay put. Adding
+ * belongs to the Fab, in thumb reach at the bottom — the header carries
+ * identity only. */
+export function AppHeader() {
   return (
     <header className="header">
       <img className="brand-logo" src="/icon.svg" alt="" aria-hidden="true" />
@@ -21,9 +24,21 @@ export function AppHeader({ action }: { action?: ReactNode }) {
         <h1>Deployer</h1>
         <span className="brand-version">{APP_VERSION}</span>
       </div>
-      {action}
       <DevMark />
     </header>
+  )
+}
+
+/** The add button for a tab: a circle floating above the tab bar, in the corner
+ * the thumb already rests in. It sits over the page rather than in the header
+ * because reaching the top of a phone one-handed is the whole problem. */
+export function Fab({ to, label }: { to: string; label: string }) {
+  return (
+    <Link className="fab" to={to} aria-label={label} title={label}>
+      <svg viewBox="0 0 24 24" aria-hidden="true" {...stroke} strokeWidth={2.2}>
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    </Link>
   )
 }
 
@@ -97,20 +112,28 @@ function DevMark() {
         <img className="dev-logo" src="/dev-badge.png" alt="" aria-hidden="true" />
       </button>
 
-      {flash && (
-        <div className="dev-flash" role="presentation" onClick={() => setFlash(false)}>
-          {/* Text rather than a link: the overlay clears itself after three
-              seconds, so anything you could tap here would be a trap. */}
-          <div className="dev-flash-lockup">
-            <img
-              className="dev-flash-logo"
-              src="/dev-badge-full.png"
-              alt="Built by CM Hegday — 0x434d"
-            />
-            <span className="dev-flash-handle">github.com/chinmay28</span>
-          </div>
-        </div>
-      )}
+      {/* Portalled to the body on purpose. The header carries a backdrop-filter
+          of its own, and an element with one becomes the backdrop root for its
+          descendants and the containing block for their fixed positioning — so
+          nested here the overlay blurred nothing and grew out of the header
+          instead of the middle of the screen. At the body it covers the
+          viewport, blurs the app behind it, and expands from the centre. */}
+      {flash &&
+        createPortal(
+          <div className="dev-flash" role="presentation" onClick={() => setFlash(false)}>
+            {/* Text rather than a link: the overlay clears itself after three
+                seconds, so anything you could tap here would be a trap. */}
+            <div className="dev-flash-lockup">
+              <img
+                className="dev-flash-logo"
+                src="/dev-badge-full.png"
+                alt="Built by CM Hegday — 0x434d"
+              />
+              <span className="dev-flash-handle">github.com/chinmay28</span>
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   )
 }
