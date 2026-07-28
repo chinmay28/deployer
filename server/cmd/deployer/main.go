@@ -21,6 +21,7 @@ import (
 	"github.com/chinmay28/deployer/server/internal/selfhost"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
+	"github.com/chinmay28/deployer/server/internal/version"
 	"github.com/chinmay28/deployer/server/internal/web"
 )
 
@@ -98,7 +99,7 @@ func run() error {
 	apiSrv := &api.Server{
 		DB: db, Hosts: hostSvc, Poller: poller,
 		Runner: runner, Health: health, Log: log, Auth: auth,
-		Self: self, Version: version(), SelfRef: *ref,
+		Self: self, Version: appVersion(), SelfRef: *ref,
 	}
 
 	mux := http.NewServeMux()
@@ -115,7 +116,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("deployer listening", "addr", *addr, "db", *dbPath, "auth", authMode(auth))
+		log.Info("deployer listening", "version", apiSrv.Version, "addr", *addr, "db", *dbPath, "auth", authMode(auth))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -152,17 +153,29 @@ func portOf(addr string) string {
 	return port
 }
 
-// version reports the build this binary came from. The linker stamps it during
-// a release build; otherwise it comes from the VCS stamp Go records.
-var buildVersion string
-
-func version() string {
-	if buildVersion != "" {
-		return buildVersion
+// appVersion reports the build this binary came from: vMAJOR.MINOR.PATCH, where
+// the patch number is the repository's commit count that `make build` and the
+// installer stamp in (see internal/version).
+//
+// A build made without that stamp has no commit count to report, so it says so
+// — patch 0 — and pins down what it actually is with the revision Go records,
+// which is the more useful half of the answer for a build off someone's branch.
+func appVersion() string {
+	if version.Stamped() {
+		return version.String()
 	}
+	if rev := revision(); rev != "" {
+		return version.String() + "+" + rev
+	}
+	return version.String()
+}
+
+// revision is the short commit Go stamped into the binary, empty if it didn't
+// (no VCS at build time, or -buildvcs=false).
+func revision() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown"
+		return ""
 	}
 	for _, setting := range info.Settings {
 		if setting.Key == "vcs.revision" {
@@ -172,7 +185,7 @@ func version() string {
 			return setting.Value
 		}
 	}
-	return "unknown"
+	return ""
 }
 
 func envOr(key, fallback string) string {

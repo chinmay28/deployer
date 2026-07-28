@@ -11,7 +11,7 @@ export default function Overview() {
   const { data, error, loading, offline } = useLoader(() => api.overview(), [], 5000)
 
   return (
-    <Page title="Deployer">
+    <Page title="Deployer" brand>
       <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 

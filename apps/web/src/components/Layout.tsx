@@ -1,17 +1,22 @@
 import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { APP_VERSION } from '../version'
 
 /** Page gives every screen the same sticky header and scroll area. */
 export function Page({
   title,
   back,
   action,
+  brand,
   children,
 }: {
   title: string
   /** Path to go back to; omitted on the four tab roots. */
   back?: string
   action?: ReactNode
+  /** Show the app icon and the running version alongside the title. Only the
+   * Overview does: it is the screen whose title *is* the app's name. */
+  brand?: boolean
   children: ReactNode
 }) {
   const navigate = useNavigate()
@@ -23,7 +28,19 @@ export function Page({
             ‹ Back
           </button>
         )}
-        <h1>{title}</h1>
+        {brand ? (
+          <>
+            <img className="brand-logo" src="/icon.svg" alt="" aria-hidden="true" />
+            {/* Name over version, as a lockup — the version reads as part of
+                the name rather than as another thing on the screen. */}
+            <div className="brand">
+              <h1>{title}</h1>
+              <span className="brand-version">{APP_VERSION}</span>
+            </div>
+          </>
+        ) : (
+          <h1>{title}</h1>
+        )}
         {action}
       </header>
       <main className="main">{children}</main>

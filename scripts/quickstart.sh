@@ -131,18 +131,40 @@ fi
 
 # --------------------------------------------------------------------- source
 
+# The build needs the whole commit graph, not just the tip: the version number's
+# patch component is the repository's commit count, and a shallow clone would
+# report that as 1 (see scripts/version.mjs). A partial clone keeps carrying all
+# of it cheap — every commit, none of the historical file contents — and a plain
+# clone is the fallback for a remote that won't serve one. Either way, never
+# shallow.
 log "Fetching Deployer ($REF)"
 mkdir -p "$INSTALL_DIR"
 if [ -d "$BUILD_DIR/.git" ]; then
   git -C "$BUILD_DIR" remote set-url origin "$REPO"
-  git -C "$BUILD_DIR" fetch --depth 1 origin "$REF" --quiet
+  # A build directory left behind by an older installer is shallow. --unshallow
+  # fills it in, and is an error on a repository that is already complete, so
+  # only ask for it when it applies.
+  unshallow=""
+  if [ "$(git -C "$BUILD_DIR" rev-parse --is-shallow-repository)" = true ]; then
+    unshallow="--unshallow"
+  fi
+  # shellcheck disable=SC2086  # $unshallow is one flag or nothing.
+  git -C "$BUILD_DIR" fetch $unshallow --filter=blob:none origin "$REF" --quiet 2>/dev/null ||
+    git -C "$BUILD_DIR" fetch $unshallow origin "$REF" --quiet ||
+    die "Could not fetch $REF from $REPO"
   git -C "$BUILD_DIR" checkout --quiet --force FETCH_HEAD
 else
   rm -rf "$BUILD_DIR"
-  git clone --depth 1 --branch "$REF" "$REPO" "$BUILD_DIR" --quiet 2>/dev/null ||
+  git clone --filter=blob:none --branch "$REF" "$REPO" "$BUILD_DIR" --quiet 2>/dev/null ||
+    { rm -rf "$BUILD_DIR" &&
+      git clone --branch "$REF" "$REPO" "$BUILD_DIR" --quiet 2>/dev/null; } ||
     die "Could not clone $REPO at $REF"
 fi
-VERSION="$(git -C "$BUILD_DIR" rev-parse --short HEAD)"
+REVISION="$(git -C "$BUILD_DIR" rev-parse --short HEAD)"
+# vMAJOR.MINOR.<commit count>, the one place it's assembled — the same number
+# the binary is stamped with below and the PWA build inlines.
+VERSION="$(node "$BUILD_DIR/scripts/version.mjs")"
+PATCH="$(node "$BUILD_DIR/scripts/version.mjs" --patch)"
 
 # ---------------------------------------------------------------------- build
 # Everything is built before the running service is touched, so a compile
@@ -152,8 +174,11 @@ log "Building the web app"
 ( cd "$BUILD_DIR/apps/web" && npm ci --silent && npm run build --silent ) ||
   die "Web build failed."
 
-log "Building the server"
-( cd "$BUILD_DIR/server" && go build -trimpath -ldflags "-s -w" -o "$INSTALL_DIR/deployer.new" ./cmd/deployer ) ||
+log "Building the server $VERSION"
+VERSION_PKG=github.com/chinmay28/deployer/server/internal/version
+( cd "$BUILD_DIR/server" &&
+  go build -trimpath -ldflags "-s -w -X $VERSION_PKG.Patch=$PATCH" \
+    -o "$INSTALL_DIR/deployer.new" ./cmd/deployer ) ||
   die "Server build failed."
 
 # ------------------------------------------------------------------- accounts
@@ -299,7 +324,7 @@ if [ -z "$ADDRESS" ]; then
 fi
 
 echo
-log "Deployer $VERSION is running"
+log "Deployer $VERSION ($REVISION) is running"
 echo "     http://$ADDRESS:$PORT  (also http://$(hostname).local:$PORT if mDNS is set up)"
 echo
 if [ -z "$PIN" ]; then

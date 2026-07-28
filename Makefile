@@ -3,13 +3,25 @@ GO ?= go
 BIN := bin/deployer
 WEB_DIST := server/internal/web/dist
 
-.PHONY: build server web test test-installer vet run clean
+## The version's patch number is the repository's commit count, which a compiled
+## binary can't ask git for — scripts/version.mjs works it out and the linker
+## stamps it in. Empty (no node, no git, a shallow clone) leaves the Go package's
+## default of 0, which reads as "unstamped build" rather than as a release.
+VERSION_PKG := github.com/chinmay28/deployer/server/internal/version
+PATCH := $(shell node scripts/version.mjs --patch 2>/dev/null)
+LDFLAGS := -s -w $(if $(PATCH),-X $(VERSION_PKG).Patch=$(PATCH))
+
+.PHONY: build server web test test-installer vet run clean version
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
 
 server: | $(WEB_DIST)/index.html
-	cd server && $(GO) build -trimpath -ldflags "-s -w" -o ../$(BIN) ./cmd/deployer
+	cd server && $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o ../$(BIN) ./cmd/deployer
+
+## version: print the version this tree would build as
+version:
+	@node scripts/version.mjs
 
 ## The Go binary embeds $(WEB_DIST), so it needs to exist even when only the
 ## server is being built. This placeholder is replaced by the real PWA.

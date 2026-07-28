@@ -82,8 +82,11 @@ func (s *Server) Routes() http.Handler {
 	return mux
 }
 
+// handleHealth is what the self-update health check polls, so it stays cheap and
+// dependency-free. The version tells an upgrade whether the binary that came
+// back up is the new one.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": s.Version})
 }
 
 // --- helpers ---
