@@ -204,6 +204,16 @@ body {
   animation: dev-flash-veil 3s ease-in-out forwards;
 }
 
+/* Badge over handle, moving as one piece — the scale lives here so the two
+   never drift apart mid-animation. */
+.dev-flash-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  animation: dev-flash-badge 3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 .dev-flash-logo {
   width: min(64vmin, 320px);
   height: min(64vmin, 320px);
@@ -211,7 +221,15 @@ body {
   box-shadow:
     0 0 0 1px var(--border),
     0 24px 60px rgba(0, 0, 0, 0.35);
-  animation: dev-flash-badge 3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Monospace to echo the badge's own wordmark, and tracked out so it reads as a
+   signature under the mark rather than a line of body copy. */
+.dev-flash-handle {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: clamp(13px, 3.2vmin, 17px);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
 }
 
 @keyframes dev-flash-veil {
@@ -247,9 +265,9 @@ body {
   }
 }
 
-/* The veil's fade stays — it is only opacity — but the badge holds still. */
+/* The veil's fade stays — it is only opacity — but the lockup holds still. */
 @media (prefers-reduced-motion: reduce) {
-  .dev-flash-logo {
+  .dev-flash-lockup {
     animation: none;
   }
 }

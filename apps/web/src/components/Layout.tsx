@@ -99,11 +99,16 @@ function DevMark() {
 
       {flash && (
         <div className="dev-flash" role="presentation" onClick={() => setFlash(false)}>
-          <img
-            className="dev-flash-logo"
-            src="/dev-badge-full.png"
-            alt="Built by CM Hegday — 0x434d"
-          />
+          {/* Text rather than a link: the overlay clears itself after three
+              seconds, so anything you could tap here would be a trap. */}
+          <div className="dev-flash-lockup">
+            <img
+              className="dev-flash-logo"
+              src="/dev-badge-full.png"
+              alt="Built by CM Hegday — 0x434d"
+            />
+            <span className="dev-flash-handle">github.com/chinmay28</span>
+          </div>
         </div>
       )}
     </>
