@@ -188,9 +188,14 @@ body {
   transform: scale(0.94);
 }
 
-/* Tapping the mark throws the full badge over the app. The veil and the badge
-   run their own fade-out; DEV_FLASH_MS in Layout.tsx unmounts the pair when
-   they are done, and a tap or Escape ends it early. */
+/* Tapping the mark throws the full badge over the app, dead centre of the
+   screen, with everything behind it blurred back. The veil and the badge run
+   their own fade-out; DEV_FLASH_MS in Layout.tsx unmounts the pair when they
+   are done, and a tap or Escape ends it early.
+
+   The veil is deliberately thin — the blur is what pushes the app back, so
+   painting over it would only waste the effect. Layout.tsx portals this to the
+   body so the blur has the whole app to work on. */
 .dev-flash {
   position: fixed;
   inset: 0;
@@ -199,8 +204,9 @@ body {
   place-items: center;
   padding: 32px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: saturate(120%) blur(14px);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: saturate(140%) blur(26px);
+  -webkit-backdrop-filter: saturate(140%) blur(26px);
   animation: dev-flash-veil 3s ease-in-out forwards;
 }
 
@@ -249,7 +255,7 @@ body {
 
 @keyframes dev-flash-badge {
   0% {
-    transform: scale(0.82);
+    transform: scale(0.7);
   }
   14% {
     transform: scale(1.02);
@@ -278,6 +284,49 @@ body {
   max-width: 720px;
   width: 100%;
   margin: 0 auto;
+}
+
+/* ---------- the floating add button ---------- */
+
+/* Adding sits in the bottom corner, a thumb's reach from the tab bar, rather
+   than in the top corner of the header. It floats over the page, so the tab
+   that carries one gives the scroll enough room to clear it — see below. */
+.fab {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(env(safe-area-inset-bottom) + 76px);
+  z-index: 25;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(16, 16, 32, 0.28);
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.14s ease;
+}
+
+.fab svg {
+  width: 26px;
+  height: 26px;
+}
+
+.fab:active {
+  transform: scale(0.92);
+}
+
+/* The last card would otherwise sit under the button at the end of a scroll. */
+.app:has(.fab) .main {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 148px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fab {
+    transition: none;
+  }
 }
 
 .tabbar {
