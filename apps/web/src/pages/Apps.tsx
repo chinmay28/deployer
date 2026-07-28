@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { Page } from '../components/Layout'
+import { TabPage } from '../components/Layout'
 import { HealthBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
 import { ago } from '../lib/format'
@@ -10,14 +10,7 @@ export default function Apps() {
   const { data: installs } = useLoader(() => api.installations(), [], 15000)
 
   return (
-    <Page
-      title="Apps"
-      action={
-        <Link to="/apps/new">
-          <button className="ghost">Add</button>
-        </Link>
-      }
-    >
+    <TabPage>
       <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
@@ -53,6 +46,6 @@ export default function Apps() {
           </Link>
         )
       })}
-    </Page>
+    </TabPage>
   )
 }

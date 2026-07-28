@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { Page } from '../components/Layout'
+import { TabPage } from '../components/Layout'
 import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
 import { ago, bytes, percent, time } from '../lib/format'
@@ -11,7 +11,7 @@ export default function Overview() {
   const { data, error, loading, offline } = useLoader(() => api.overview(), [], 5000)
 
   return (
-    <Page title="Deployer" brand>
+    <TabPage>
       <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
@@ -77,7 +77,7 @@ export default function Overview() {
           )}
         </>
       )}
-    </Page>
+    </TabPage>
   )
 }
 

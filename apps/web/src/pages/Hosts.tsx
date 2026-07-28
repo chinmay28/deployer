@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { Page } from '../components/Layout'
+import { TabPage } from '../components/Layout'
 import { HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
 import { ago } from '../lib/format'
@@ -9,14 +9,7 @@ export default function Hosts() {
   const { data, error, loading, offline } = useLoader(() => api.hosts(), [], 10000)
 
   return (
-    <Page
-      title="Hosts"
-      action={
-        <Link to="/hosts/new">
-          <button className="ghost">Add</button>
-        </Link>
-      }
-    >
+    <TabPage>
       <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
@@ -52,6 +45,6 @@ export default function Hosts() {
           </div>
         </Link>
       ))}
-    </Page>
+    </TabPage>
   )
 }

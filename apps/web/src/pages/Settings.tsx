@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { Page } from '../components/Layout'
+import { TabPage } from '../components/Layout'
 import { HomeBadge, HostBadge } from '../components/status'
 import { Banner, Card, Copyable, Field, Loading, SectionTitle, Sheet, useLoader } from '../components/ui'
 import type { SelfInfo } from '../types'
@@ -29,7 +29,7 @@ export default function Settings() {
   }
 
   return (
-    <Page title="Settings">
+    <TabPage>
       <Loading error={error} offline={offline} hasData={!!data} />
       {notice && <Banner tone="warn">{notice}</Banner>}
 
@@ -115,7 +115,7 @@ export default function Settings() {
           </div>
         </Sheet>
       )}
-    </Page>
+    </TabPage>
   )
 }
 

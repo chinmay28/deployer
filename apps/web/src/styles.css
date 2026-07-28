@@ -107,8 +107,8 @@ body {
   white-space: nowrap;
 }
 
-/* The brand lockup on the Overview header: the app icon, then the name over the
-   running build. `brand` takes over the h1's job of soaking up the free space. */
+/* The brand lockup the tabs share: the app icon, then the name over the running
+   build. `brand` takes over the h1's job of soaking up the free space. */
 .header .brand-logo {
   width: 30px;
   height: 30px;
@@ -146,6 +146,112 @@ body {
   padding: 0;
   min-height: auto;
   font-weight: 500;
+}
+
+/* ---------- the developer mark ---------- */
+
+/* A small dark disk at the end of the shared header. It stays dark in both
+   themes, muted behind a hairline ring until it is touched, so it signs the app
+   without competing with the action beside it. */
+.header .dev {
+  flex: none;
+  min-height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  line-height: 0;
+}
+
+.header .dev-logo {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  /* The artwork is opaque black; the backing colour only shows while it loads. */
+  background: #101010;
+  box-shadow: 0 0 0 1px var(--border);
+  opacity: 0.8;
+  transition:
+    opacity 0.14s ease,
+    box-shadow 0.14s ease,
+    transform 0.14s ease;
+}
+
+.header .dev:hover .dev-logo,
+.header .dev:focus-visible .dev-logo {
+  opacity: 1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.header .dev:active .dev-logo {
+  transform: scale(0.94);
+}
+
+/* Tapping the mark throws the full badge over the app. The veil and the badge
+   run their own fade-out; DEV_FLASH_MS in Layout.tsx unmounts the pair when
+   they are done, and a tap or Escape ends it early. */
+.dev-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: saturate(120%) blur(14px);
+  animation: dev-flash-veil 3s ease-in-out forwards;
+}
+
+.dev-flash-logo {
+  width: min(64vmin, 320px);
+  height: min(64vmin, 320px);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 24px 60px rgba(0, 0, 0, 0.35);
+  animation: dev-flash-badge 3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes dev-flash-veil {
+  0% {
+    opacity: 0;
+  }
+  7% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes dev-flash-badge {
+  0% {
+    transform: scale(0.82);
+  }
+  14% {
+    transform: scale(1.02);
+  }
+  22% {
+    transform: scale(1);
+  }
+  82% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.06);
+  }
+}
+
+/* The veil's fade stays — it is only opacity — but the badge holds still. */
+@media (prefers-reduced-motion: reduce) {
+  .dev-flash-logo {
+    animation: none;
+  }
 }
 
 .main {
