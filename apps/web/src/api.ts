@@ -1,10 +1,14 @@
 import type {
   App,
+  Crontab,
   Deployment,
+  DirListing,
   Host,
+  HostFile,
   HostTestResult,
   Installation,
   Overview,
+  PowerAction,
   ProvisionResult,
   Sample,
   SelfInfo,
@@ -73,6 +77,35 @@ export const api = {
   hostMetrics: (id: number, minutes = 60) =>
     request<{ hostId: number; minutes: number; samples: Sample[] }>(
       `/api/hosts/${id}/metrics?minutes=${minutes}`,
+    ),
+  /** Reboot or shut the machine down. It goes a few seconds after this returns. */
+  power: (id: number, action: PowerAction) =>
+    request<{ action: string; status: string }>(`/api/hosts/${id}/power`, {
+      method: 'POST',
+      ...json({ action }),
+    }),
+
+  /** An empty user means the account Deployer signs in as. */
+  crontab: (id: number, user = '') =>
+    request<Crontab>(`/api/hosts/${id}/cron?user=${encodeURIComponent(user)}`),
+  saveCrontab: (id: number, user: string, content: string) =>
+    request<Crontab>(`/api/hosts/${id}/cron`, { method: 'PUT', ...json({ user, content }) }),
+
+  /** An empty path lists the SSH user's home, which only the host knows. */
+  files: (id: number, path = '') =>
+    request<DirListing>(`/api/hosts/${id}/files?path=${encodeURIComponent(path)}`),
+  file: (id: number, path: string) =>
+    request<HostFile>(`/api/hosts/${id}/files/content?path=${encodeURIComponent(path)}`),
+  saveFile: (id: number, path: string, content: string) =>
+    request<HostFile>(`/api/hosts/${id}/files/content`, { method: 'PUT', ...json({ path, content }) }),
+  mkdir: (id: number, path: string) =>
+    request<{ path: string }>(`/api/hosts/${id}/files/mkdir`, { method: 'POST', ...json({ path }) }),
+  renameFile: (id: number, path: string, to: string) =>
+    request<{ path: string }>(`/api/hosts/${id}/files/rename`, { method: 'POST', ...json({ path, to }) }),
+  deleteFile: (id: number, path: string, recursive = false) =>
+    request<void>(
+      `/api/hosts/${id}/files?path=${encodeURIComponent(path)}${recursive ? '&recursive=true' : ''}`,
+      { method: 'DELETE' },
     ),
 
   apps: () => request<App[]>('/api/apps'),

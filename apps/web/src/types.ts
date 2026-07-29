@@ -67,6 +67,60 @@ export interface ProvisionResult {
   hints?: string[]
 }
 
+/** What a directory entry is. A symlink keeps its own type and says what it
+ *  resolves to, so the browser can open it as what it points at. */
+export type EntryType = 'dir' | 'file' | 'link' | 'other'
+
+export interface DirEntry {
+  name: string
+  type: EntryType
+  /** For a symlink: 'dir', 'file', 'other', or 'broken' where it leads nowhere. */
+  linkType?: EntryType | 'broken'
+  /** The symlink as written, unresolved. */
+  target?: string
+  size: number
+  /** Permission bits in octal, e.g. "644". */
+  mode: string
+  owner: string
+  group: string
+  modifiedAt: string
+}
+
+export interface DirListing {
+  /** Where the host ended up, with symlinks resolved. */
+  path: string
+  parent: string
+  entries: DirEntry[]
+  /** True when the directory holds more than the listing returns. */
+  truncated: boolean
+  /** Who the commands ran as — root wherever passwordless sudo is set up. */
+  asUser: string
+}
+
+export interface HostFile {
+  path: string
+  size: number
+  mode: string
+  owner: string
+  group: string
+  modifiedAt: string
+  content: string
+  /** Only the first part of the file came back. */
+  truncated: boolean
+  /** Not text: shown, never offered for editing. */
+  binary: boolean
+  asUser: string
+}
+
+export interface Crontab {
+  user: string
+  content: string
+  /** False where the user has no crontab yet, which is not an error. */
+  exists: boolean
+}
+
+export type PowerAction = 'reboot' | 'shutdown'
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

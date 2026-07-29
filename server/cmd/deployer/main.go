@@ -17,6 +17,7 @@ import (
 
 	"github.com/chinmay28/deployer/server/internal/api"
 	"github.com/chinmay28/deployer/server/internal/deploy"
+	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
 	"github.com/chinmay28/deployer/server/internal/selfhost"
 	"github.com/chinmay28/deployer/server/internal/sshx"
@@ -98,7 +99,7 @@ func run() error {
 
 	apiSrv := &api.Server{
 		DB: db, Hosts: hostSvc, Poller: poller,
-		Runner: runner, Health: health, Log: log, Auth: auth,
+		Runner: runner, Health: health, Ops: hostops.NewService(hostSvc), Log: log, Auth: auth,
 		Self: self, Version: appVersion(), SelfRef: *ref,
 	}
 

@@ -155,6 +155,45 @@ one a single tap: **Redeploy** reopens the same confirmation prefilled with the
 parameters you used last time. Deployments of the same app to the same host are
 serialized — a second one is refused while the first is running.
 
+## Managing a host
+
+A host's page has a **Manage** section for the jobs that otherwise mean finding
+a laptop and an SSH client.
+
+**Files** browses the machine. Tap a directory to descend, a file to read it,
+and **Edit** to change it — a config, a unit file, a script. There is no agent
+and no file transfer: a listing is one `find` (or a `stat` loop where busybox
+has no `find -printf`), and a file's contents cross the wire base64-encoded so
+nothing is lost to an encoding, a control byte, or a missing final newline.
+
+Saving writes through a temporary file in the same directory and moves it into
+place, so a reader sees either the old file or the new one, never half of each,
+and a failure part way through leaves the original alone. An existing file keeps
+its mode and its owner. A symlink is followed: editing `/etc/resolv.conf` edits
+what it points at rather than replacing the link.
+
+Two things are deliberately not editable. A file over 512 KB comes back
+truncated, and saving the part you can see would throw the rest away; a binary
+file is shown as binary rather than run through a textarea that would mangle it.
+
+**Scheduled jobs** edits the crontab, the whole file at once, the way
+`crontab -e` does — for the user Deployer signs in as, and for root. Cron is
+what validates it: a crontab it refuses to parse is not installed, the old one
+stays, and its complaint is what you see. A user with no crontab yet is an empty
+editor, not an error.
+
+**Power** reboots or shuts the machine down. The command is scheduled a few
+seconds ahead and detached, so Deployer gets a clean answer instead of the
+connection dying mid-command and having to guess what that meant — the same
+reason a self-update runs detached. The host is marked offline as soon as it
+accepts, because it is about to be.
+
+All of this runs as root wherever the SSH user has passwordless sudo, and as
+that user where it doesn't; which one it was is shown on the screen. That is not
+an escalation — Deployer already holds a key that can run anything on the
+machine — but a file browser that could not open `/etc` would be hiding the
+reality rather than limiting it.
+
 ## Monitoring
 
 No agent is installed on the host. Deployer opens an SSH session and reads
@@ -171,6 +210,10 @@ Deployer holds a key that can run commands as root on every host you add. Treat
 it accordingly:
 
 - **Keep it on your LAN or Tailscale network.** Don't expose it to the internet.
+- Anyone who can reach the UI can **browse and edit any file on every host**, as
+  root, and restart the machines. That follows from the key Deployer already
+  holds rather than adding to it, but it does put a root shell's reach behind a
+  web page — which is the whole argument for the PIN and for the LAN.
 - It runs **unauthenticated by default**. Set a PIN with `-pin` /
   `DEPLOYER_PIN` if anything less trusted can reach it.
 - The **database contains the SSH private key**. The installer keeps it at mode
@@ -236,6 +279,12 @@ store, the API handlers, and — where a local `sshd` can be started — real SS
 connections: key auth, host-key pinning and rejection, live deployments, exit
 codes, cancellation, log streaming and health checks.
 
+The shell scripts behind host management are tested by running them: against a
+real filesystem, through a real shell, with the parsers the SSH path uses, both
+with GNU `find` and with it forced to fail so the busybox fallback is covered.
+Quoting is tested the same way — every path a person could type is handed to
+`/bin/sh` and has to come back out the other side unchanged.
+
 ## API
 
 | Method   | Path                                | Purpose                              |
@@ -254,6 +303,15 @@ codes, cancellation, log streaming and health checks.
 | `POST`   | `/api/hosts/{id}/test`              | check reachability, key auth, sudo   |
 | `POST`   | `/api/hosts/{id}/provision`         | one-time password setup, not stored  |
 | `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440      |
+| `POST`   | `/api/hosts/{id}/power`             | reboot or shut the machine down      |
+| `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
+| `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
+| `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
+| `DELETE` | `/api/hosts/{id}/files`             | delete `?path=`, `&recursive=true` for a full directory |
+| `GET`    | `/api/hosts/{id}/files/content`     | read a file, `?path=`                |
+| `PUT`    | `/api/hosts/{id}/files/content`     | write a file, keeping mode and owner |
+| `POST`   | `/api/hosts/{id}/files/mkdir`       | create a directory                   |
+| `POST`   | `/api/hosts/{id}/files/rename`      | move a file, never over an existing one |
 | `GET`    | `/api/apps`                         | apps                                 |
 | `POST`   | `/api/apps`                         | add an app                           |
 | `GET`    | `/api/apps/{id}`                    | one app                              |
@@ -281,6 +339,7 @@ server/
   internal/sshx/     Deployer's keypair and SSH connections
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
+  internal/hostops/  managing a host: its files, its crontab, its power state
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate

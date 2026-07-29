@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/chinmay28/deployer/server/internal/deploy"
+	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
@@ -26,7 +27,9 @@ type Server struct {
 	Poller *hosts.Poller
 	Runner *deploy.Runner
 	Health *deploy.Checker
-	Log    *slog.Logger
+	// Ops runs administrative work on a host: files, crontabs, restarts.
+	Ops *hostops.Service
+	Log *slog.Logger
 	// Self identifies the machine Deployer runs on; nil disables self-update.
 	Self SelfManager
 	// Version is the build this binary was made from.
@@ -56,6 +59,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/test", s.handleTestHost)
 	mux.HandleFunc("POST /api/hosts/{id}/provision", s.handleProvisionHost)
 	mux.HandleFunc("GET /api/hosts/{id}/metrics", s.handleHostMetrics)
+	mux.HandleFunc("POST /api/hosts/{id}/power", s.handleHostPower)
+
+	mux.HandleFunc("GET /api/hosts/{id}/cron", s.handleGetCrontab)
+	mux.HandleFunc("PUT /api/hosts/{id}/cron", s.handlePutCrontab)
+
+	mux.HandleFunc("GET /api/hosts/{id}/files", s.handleListFiles)
+	mux.HandleFunc("DELETE /api/hosts/{id}/files", s.handleRemoveFile)
+	mux.HandleFunc("GET /api/hosts/{id}/files/content", s.handleReadFile)
+	mux.HandleFunc("PUT /api/hosts/{id}/files/content", s.handleWriteFile)
+	mux.HandleFunc("POST /api/hosts/{id}/files/mkdir", s.handleMkdir)
+	mux.HandleFunc("POST /api/hosts/{id}/files/rename", s.handleRenameFile)
 
 	mux.HandleFunc("GET /api/apps", s.handleListApps)
 	mux.HandleFunc("POST /api/apps", s.handleCreateApp)
@@ -141,7 +155,13 @@ func isUniqueViolation(err error) bool {
 }
 
 func decodeJSON(r *http.Request, dst any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	return decodeJSONLimit(r, dst, 1<<20)
+}
+
+// decodeJSONLimit is decodeJSON with room for a request that legitimately
+// carries bulk — the contents of a file being saved on a host.
+func decodeJSONLimit(r *http.Request, dst any, limit int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return errors.New("invalid request body: " + err.Error())
