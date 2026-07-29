@@ -54,6 +54,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/hosts/{id}", s.handleUpdateHost)
 	mux.HandleFunc("DELETE /api/hosts/{id}", s.handleDeleteHost)
 	mux.HandleFunc("POST /api/hosts/{id}/test", s.handleTestHost)
+	mux.HandleFunc("POST /api/hosts/{id}/provision", s.handleProvisionHost)
 	mux.HandleFunc("GET /api/hosts/{id}/metrics", s.handleHostMetrics)
 
 	mux.HandleFunc("GET /api/apps", s.handleListApps)

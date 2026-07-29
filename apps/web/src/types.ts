@@ -52,6 +52,21 @@ export interface HostTestResult {
   hints?: string[]
 }
 
+export interface ProvisionStep {
+  name: string
+  ok: boolean
+  detail?: string
+}
+
+/** The outcome of the one-time setup that authorizes Deployer on a host. */
+export interface ProvisionResult {
+  ok: boolean
+  error?: string
+  sudoOk: boolean
+  steps: ProvisionStep[]
+  hints?: string[]
+}
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

@@ -77,9 +77,29 @@ unhealthy, which is what a service that restarts needs.
 ## Adding a host
 
 Deployer generates its own ed25519 keypair on first run and keeps it in its
-database. There is no other key material to manage. Settings shows the public
-key and the two commands to paste on the new machine, signed in as the user
-Deployer will connect as:
+database. There is no other key material to manage. A host needs two things
+before Deployer can use it: that public key in the SSH user's
+`authorized_keys`, and passwordless sudo for the user, since install commands
+end in `| sudo bash`.
+
+**The add-host form will do both for you.** Give it the SSH user's password and
+Deployer signs in with it once, appends its own key, writes
+`/etc/sudoers.d/deployer` through `sudo -S`, and then reconnects with the key
+alone to prove it worked — reporting each step as it goes. Every step is
+idempotent, so a partial run is simply repeated: hosts added earlier, or a
+first attempt that failed, get the same thing from **Set up access** on the
+host's page.
+
+The password is used for that one connection and nothing else. It is never
+written to the database, never logged, and never sent back to the browser; it
+reaches the host over the SSH handshake and `sudo`'s stdin, never a command
+line where the host's process list would show it. The sudoers file is checked
+with `visudo` before it is moved into place, because a malformed drop-in breaks
+`sudo` for everyone on the machine.
+
+Leave the password empty and nothing changes from before: the host is saved and
+you run the two commands from Settings on the machine yourself, signed in as the
+user Deployer will connect as.
 
 ```sh
 # 1. trust Deployer's key
@@ -88,6 +108,9 @@ mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo 'ssh-ed25519 AAAA... deployer' >> ~/
 # 2. allow unattended installs, since install scripts end in `| sudo bash`
 echo "$(whoami) ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/deployer >/dev/null && sudo chmod 440 /etc/sudoers.d/deployer
 ```
+
+That is also the route for a host with password logins turned off, which is what
+Deployer reports if the handshake is refused.
 
 **Test connection** checks all of it at once — reachability, key auth,
 passwordless sudo — and tells you which part is missing.
@@ -152,6 +175,10 @@ it accordingly:
   `DEPLOYER_PIN` if anything less trusted can reach it.
 - The **database contains the SSH private key**. The installer keeps it at mode
   700 under `/var/lib/deployer`; back it up like a secret.
+- A **host password given during setup is never stored** — not in the database,
+  not in the log. It exists for one request. It does cross the network to
+  Deployer in the clear if you are on plain `http`, so set a host up from a
+  network you trust, the same one you would type the PIN over.
 - The systemd unit runs as a dedicated non-root user with `NoNewPrivileges`,
   `ProtectSystem=strict`, an empty capability set and a system-call filter.
 - Rotating the key in Settings invalidates every host until you install the new
@@ -164,6 +191,7 @@ make build          # PWA into the Go embed directory, then the binary
 make run            # build and start on :8899
 make test           # Go tests, including SSH integration tests where sshd exists
 make test-installer # install, upgrade, rollback and uninstall, in a sandbox
+make test-provision # set a host up over SSH for real (root; changes the machine)
 
 cd apps/web && npm run dev   # Vite dev server, proxying /api to :8899
 
@@ -224,6 +252,7 @@ codes, cancellation, log streaming and health checks.
 | `PATCH`  | `/api/hosts/{id}`                   | edit name, address, port or user     |
 | `DELETE` | `/api/hosts/{id}`                   | remove a host and its history        |
 | `POST`   | `/api/hosts/{id}/test`              | check reachability, key auth, sudo   |
+| `POST`   | `/api/hosts/{id}/provision`         | one-time password setup, not stored  |
 | `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440      |
 | `GET`    | `/api/apps`                         | apps                                 |
 | `POST`   | `/api/apps`                         | add an app                           |

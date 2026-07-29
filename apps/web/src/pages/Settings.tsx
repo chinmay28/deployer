@@ -38,7 +38,9 @@ export default function Settings() {
 
       <SectionTitle>Adding a host</SectionTitle>
       <p className="sub" style={{ margin: '0 4px 12px' }}>
-        Run these two commands on the machine, signed in as the user Deployer will connect as.
+        Adding a host can do both of these for you, if you give it the host's password once — it is
+        used for that one connection and never stored. These are the same two steps by hand, run on
+        the machine, signed in as the user Deployer will connect as.
       </p>
 
       {data && (

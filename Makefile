@@ -11,7 +11,7 @@ VERSION_PKG := github.com/chinmay28/deployer/server/internal/version
 PATCH := $(shell node scripts/version.mjs --patch 2>/dev/null)
 LDFLAGS := -s -w $(if $(PATCH),-X $(VERSION_PKG).Patch=$(PATCH))
 
-.PHONY: build server web test test-installer vet run clean version
+.PHONY: build server web test test-installer test-provision vet run clean version
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
@@ -43,6 +43,11 @@ test:
 ## test-installer: install, upgrade, rollback and uninstall in a sandbox (needs root)
 test-installer:
 	./scripts/test-quickstart.sh
+
+## test-provision: set a host up over SSH for real (needs root and sshd; makes a
+## throwaway user and writes /etc/sudoers.d/deployer, then removes both)
+test-provision:
+	cd server && DEPLOYER_E2E=1 $(GO) test ./internal/hosts/ -run ProvisionEndToEnd -v
 
 vet:
 	cd server && $(GO) vet ./...

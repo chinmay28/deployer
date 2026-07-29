@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
+import { SetupSheet } from '../components/provision'
 import { DeploymentBadge, HomeBadge, HostBadge } from '../components/status'
 import { Badge, Banner, Card, Loading, Meter, SectionTitle, Sheet, Sparkline, useLoader } from '../components/ui'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
@@ -14,13 +15,14 @@ export default function HostDetail() {
 
   // Asking for metrics also tells the server someone is watching, which raises
   // the sampling rate for this host.
-  const { data: host, error, offline } = useLoader(() => api.host(hostId), [hostId], 5000)
+  const { data: host, error, offline, reload } = useLoader(() => api.host(hostId), [hostId], 5000)
   const { data: metrics } = useLoader(() => api.hostMetrics(hostId, 60), [hostId], 5000)
   const { data: deployments } = useLoader(() => api.deployments({ hostId, limit: 8 }), [hostId], 10000)
 
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<HostTestResult | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [settingUp, setSettingUp] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const test = async () => {
@@ -96,7 +98,7 @@ export default function HostDetail() {
               <div style={{ marginTop: 12 }}>
                 <Banner tone="warn">
                   Passwordless sudo isn't set up for {host.username}. Deployments that need root will
-                  fail — Settings has the command to fix it.
+                  fail — set up access with the host's password, or run the command in Settings.
                 </Banner>
               </div>
             )}
@@ -105,6 +107,13 @@ export default function HostDetail() {
               <button className="secondary" onClick={test} disabled={testing}>
                 {testing ? 'Testing…' : 'Test connection'}
               </button>
+              {/* A working host needs nothing, so setup only fronts up when
+                  something is actually missing. */}
+              {(host.status !== 'online' || !host.sudoOk) && (
+                <button className="primary" onClick={() => setSettingUp(true)}>
+                  Set up access
+                </button>
+              )}
             </div>
           </Card>
 
@@ -224,10 +233,38 @@ export default function HostDetail() {
               {hint}
             </p>
           ))}
-          <button className="primary block" onClick={() => setResult(null)}>
-            Done
-          </button>
+          {!result.ok || !result.sudoOk ? (
+            <div className="actions">
+              <button className="secondary" onClick={() => setResult(null)}>
+                Done
+              </button>
+              <button
+                className="primary"
+                onClick={() => {
+                  setResult(null)
+                  setSettingUp(true)
+                }}
+              >
+                Set up access
+              </button>
+            </div>
+          ) : (
+            <button className="primary block" onClick={() => setResult(null)}>
+              Done
+            </button>
+          )}
         </Sheet>
+      )}
+
+      {settingUp && host && (
+        <SetupSheet
+          hostId={hostId}
+          username={host.username}
+          address={host.address}
+          port={host.port}
+          onClose={() => setSettingUp(false)}
+          onFinished={reload}
+        />
       )}
 
       {confirmDelete && (

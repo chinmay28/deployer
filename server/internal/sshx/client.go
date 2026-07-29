@@ -20,6 +20,11 @@ import (
 // reinstalled host or someone in the middle.
 var ErrHostKeyChanged = errors.New("host key changed since it was first trusted")
 
+// ErrAuthFailed means the host refused the credentials offered. Distinguished
+// from a transport failure so callers can say "wrong password" rather than
+// "unreachable".
+var ErrAuthFailed = errors.New("authentication failed")
+
 // DialTimeout bounds the TCP connect and SSH handshake.
 const DialTimeout = 10 * time.Second
 
@@ -43,8 +48,35 @@ type Client struct {
 	once sync.Once
 }
 
-// Dial opens an SSH connection, honouring ctx for the connect phase.
+// Dial opens an SSH connection using Deployer's keypair, honouring ctx for the
+// connect phase.
 func Dial(ctx context.Context, t Target, id *Identity) (*Client, error) {
+	return dial(ctx, t, []ssh.AuthMethod{ssh.PublicKeys(id.Signer)})
+}
+
+// DialPassword opens an SSH connection with a password, for the one-time setup
+// that installs Deployer's key on a host. The password is used for this
+// handshake and nothing else: it is never written to the database or the log.
+//
+// Keyboard-interactive is offered alongside plain password auth because that is
+// how sshd asks when it delegates to PAM, which is the default on most distros.
+func DialPassword(ctx context.Context, t Target, password string) (*Client, error) {
+	interactive := ssh.KeyboardInteractive(func(_, _ string, questions []string, echos []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i := range questions {
+			// Only answer prompts with the echo off — those are password
+			// prompts. An echoing prompt is asking for something else.
+			if i < len(echos) && echos[i] {
+				continue
+			}
+			answers[i] = password
+		}
+		return answers, nil
+	})
+	return dial(ctx, t, []ssh.AuthMethod{ssh.Password(password), interactive})
+}
+
+func dial(ctx context.Context, t Target, auth []ssh.AuthMethod) (*Client, error) {
 	port := t.Port
 	if port == 0 {
 		port = 22
@@ -54,7 +86,7 @@ func Dial(ctx context.Context, t Target, id *Identity) (*Client, error) {
 	var presented string
 	cfg := &ssh.ClientConfig{
 		User:    t.User,
-		Auth:    []ssh.AuthMethod{ssh.PublicKeys(id.Signer)},
+		Auth:    auth,
 		Timeout: DialTimeout,
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			presented = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
@@ -85,6 +117,9 @@ func Dial(ctx context.Context, t Target, id *Identity) (*Client, error) {
 	sshConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
 	if err != nil {
 		netConn.Close()
+		if isAuthFailure(err) {
+			return nil, fmt.Errorf("%w for %s@%s", ErrAuthFailed, t.User, addr)
+		}
 		return nil, fmt.Errorf("ssh handshake with %s: %w", addr, err)
 	}
 	if err := netConn.SetDeadline(time.Time{}); err != nil {
@@ -111,6 +146,13 @@ type Result struct {
 // Run executes cmd and waits for it to finish. A non-zero exit is reported in
 // Result.ExitCode, not as an error; only transport failures return an error.
 func (c *Client) Run(ctx context.Context, cmd string) (*Result, error) {
+	return c.RunInput(ctx, cmd, "")
+}
+
+// RunInput is Run with stdin fed from a string. It exists for `sudo -S`, which
+// wants the password on stdin — passing it on the command line would put it in
+// the host's process list.
+func (c *Client) RunInput(ctx context.Context, cmd, stdin string) (*Result, error) {
 	session, err := c.conn.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("open session: %w", err)
@@ -120,6 +162,9 @@ func (c *Client) Run(ctx context.Context, cmd string) (*Result, error) {
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
+	if stdin != "" {
+		session.Stdin = strings.NewReader(stdin)
+	}
 
 	stop := context.AfterFunc(ctx, func() { session.Signal(ssh.SIGKILL); session.Close() })
 	defer stop()
@@ -182,6 +227,21 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+// isAuthFailure recognises the credentials being refused, as opposed to the
+// host being unreachable or presenting the wrong key.
+func isAuthFailure(err error) bool {
+	if errors.Is(err, ErrHostKeyChanged) {
+		return false
+	}
+	return strings.Contains(err.Error(), "unable to authenticate")
+}
+
+// Quote wraps s so a POSIX shell reads it as one literal word: a single quote
+// inside single quotes has to be closed, escaped, and reopened.
+func Quote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func firstLine(s string) string {
