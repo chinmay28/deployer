@@ -129,7 +129,8 @@ func (s *Service) Test(ctx context.Context, h *store.Host) *TestResult {
 				"The host's SSH key changed. If you reinstalled it, remove and re-add the host to trust the new key.")
 		default:
 			res.Hints = append(res.Hints,
-				fmt.Sprintf("Add Deployer's public key to ~%s/.ssh/authorized_keys on the host (see Settings).", h.Username),
+				"Set up access with the host's password and Deployer will authorize its own key.",
+				fmt.Sprintf("Or add Deployer's public key to ~%s/.ssh/authorized_keys on the host by hand (see Settings).", h.Username),
 				"Check the address, port and username, and that the host is powered on and reachable.")
 		}
 		return res
@@ -145,7 +146,7 @@ func (s *Service) Test(ctx context.Context, h *store.Host) *TestResult {
 	}
 	if !res.SudoOK {
 		res.Hints = append(res.Hints,
-			fmt.Sprintf("Passwordless sudo is not enabled for %s. Deploys that need root will fail until it is (see Settings).", h.Username))
+			fmt.Sprintf("Passwordless sudo is not enabled for %s. Deploys that need root will fail until it is — set up access with the host's password, or run the command in Settings.", h.Username))
 	}
 	return res
 }

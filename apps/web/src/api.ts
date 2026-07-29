@@ -5,6 +5,7 @@ import type {
   HostTestResult,
   Installation,
   Overview,
+  ProvisionResult,
   Sample,
   SelfInfo,
   SSHKeyInfo,
@@ -66,6 +67,9 @@ export const api = {
     request<Host>(`/api/hosts/${id}`, { method: 'PATCH', ...json(input) }),
   deleteHost: (id: number) => request<void>(`/api/hosts/${id}`, { method: 'DELETE' }),
   testHost: (id: number) => request<HostTestResult>(`/api/hosts/${id}/test`, { method: 'POST' }),
+  /** One-time setup. The password is sent, used and forgotten — never stored. */
+  provisionHost: (id: number, password: string) =>
+    request<ProvisionResult>(`/api/hosts/${id}/provision`, { method: 'POST', ...json({ password }) }),
   hostMetrics: (id: number, minutes = 60) =>
     request<{ hostId: number; minutes: number; samples: Sample[] }>(
       `/api/hosts/${id}/metrics?minutes=${minutes}`,

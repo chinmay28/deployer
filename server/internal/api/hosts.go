@@ -146,6 +146,43 @@ func (s *Server) handleTestHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Hosts.Test(ctx, h))
 }
 
+// provisionInput carries the one-time password for setting a host up. It is
+// used for the duration of the request and then dropped: nothing here is
+// written to the database or the log.
+type provisionInput struct {
+	Password string `json:"password"`
+}
+
+// handleProvisionHost does by SSH what the two commands in Settings do by hand:
+// authorize Deployer's key and grant passwordless sudo. Like a test, a failure
+// to set the host up is a 200 with the reasons in the body — the request itself
+// worked, the host is just not ready.
+func (s *Server) handleProvisionHost(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "provision host")
+		return
+	}
+	var in provisionInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if in.Password == "" {
+		writeError(w, http.StatusBadRequest, "a password is required to set the host up")
+		return
+	}
+	// Long enough for a slow handshake, the two setup commands, and the probe
+	// that verifies them — the probe alone sleeps a second to average CPU.
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
+	result := s.Hosts.Provision(ctx, h, in.Password)
+	in.Password = ""
+	s.Log.Info("api: provisioned host", "host", h.Name, "ok", result.OK, "sudo", result.SudoOK)
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleHostMetrics(w http.ResponseWriter, r *http.Request) {
 	h, err := s.hostFromPath(r)
 	if err != nil {

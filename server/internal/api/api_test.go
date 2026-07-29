@@ -177,6 +177,40 @@ func TestHostMetricsEmpty(t *testing.T) {
 	}
 }
 
+func TestProvisionHostValidation(t *testing.T) {
+	_, h := testServer(t, "")
+	do(t, h, "POST", "/api/hosts", `{"name":"pi","address":"127.0.0.1","port":1,"username":"u"}`)
+
+	if w := do(t, h, "POST", "/api/hosts/404/provision", `{"password":"x"}`); w.Code != http.StatusNotFound {
+		t.Errorf("unknown host status = %d, want 404", w.Code)
+	}
+	if w := do(t, h, "POST", "/api/hosts/1/provision", `{"password":""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty password status = %d, want 400", w.Code)
+	}
+	// The password is the only thing this endpoint accepts: anything else
+	// smuggled in would be a field the caller thinks is being saved.
+	if w := do(t, h, "POST", "/api/hosts/1/provision", `{"password":"x","username":"root"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("unknown field status = %d, want 400", w.Code)
+	}
+
+	// Port 1 has nothing listening, so setup fails — but as a reported outcome,
+	// not an HTTP error, and with the host left as it was.
+	w := do(t, h, "POST", "/api/hosts/1/provision", `{"password":"hunter2"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body)
+	}
+	result := decode[hosts.ProvisionResult](t, w)
+	if result.OK || result.Error == "" {
+		t.Errorf("result = %+v, want a failure with a reason", result)
+	}
+	if len(result.Hints) == 0 {
+		t.Error("a failed setup should say what to try next")
+	}
+	if strings.Contains(w.Body.String(), "hunter2") {
+		t.Error("the password came back in the response")
+	}
+}
+
 func TestSSHKeyEndpoint(t *testing.T) {
 	_, h := testServer(t, "")
 	w := do(t, h, "GET", "/api/settings/ssh", "")

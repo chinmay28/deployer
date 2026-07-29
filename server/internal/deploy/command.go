@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
@@ -83,8 +84,7 @@ func ShellQuote(s string) string {
 	if shellSafe.MatchString(s) {
 		return s
 	}
-	// A single quote inside single quotes has to be closed, escaped, reopened.
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return sshx.Quote(s)
 }
 
 // ResolveParams merges submitted values over an app's defaults and adds the
