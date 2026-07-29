@@ -119,8 +119,6 @@ export interface Crontab {
   exists: boolean
 }
 
-export type PowerAction = 'reboot' | 'shutdown'
-
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

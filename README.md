@@ -303,7 +303,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/test`              | check reachability, key auth, sudo   |
 | `POST`   | `/api/hosts/{id}/provision`         | one-time password setup, not stored  |
 | `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440      |
-| `POST`   | `/api/hosts/{id}/power`             | reboot or shut the machine down      |
+| `POST`   | `/api/hosts/{id}/reboot`            | restart the machine (there is no shutdown) |
 | `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
 | `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
