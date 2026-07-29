@@ -6,7 +6,7 @@ import { SetupSheet } from '../components/provision'
 import { DeploymentBadge, HomeBadge, HostBadge } from '../components/status'
 import { Badge, Banner, Card, Loading, Meter, SectionTitle, Sheet, Sparkline, useLoader } from '../components/ui'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
-import type { HostTestResult } from '../types'
+import type { HostTestResult, PowerAction } from '../types'
 
 export default function HostDetail() {
   const { id } = useParams()
@@ -24,6 +24,9 @@ export default function HostDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [settingUp, setSettingUp] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [powerAction, setPowerAction] = useState<PowerAction | null>(null)
+  const [powering, setPowering] = useState(false)
+  const [powerNotice, setPowerNotice] = useState<string | null>(null)
 
   const test = async () => {
     setTesting(true)
@@ -47,6 +50,29 @@ export default function HostDetail() {
     }
   }
 
+  // The host goes down a few seconds after it answers, so the confirmation is
+  // the last thing it will say. The poller finding it gone afterwards is what
+  // is meant to happen, not a failure.
+  const power = async (action: PowerAction) => {
+    setPowering(true)
+    setActionError(null)
+    try {
+      await api.power(hostId, action)
+      setPowerNotice(
+        action === 'reboot'
+          ? `${host?.name} is restarting. It will show as offline until it answers again.`
+          : `${host?.name} is shutting down.`,
+      )
+      setPowerAction(null)
+      reload()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+      setPowerAction(null)
+    } finally {
+      setPowering(false)
+    }
+  }
+
   const sample = host?.latest
   const cpuHistory = metrics?.samples.map((s) => s.cpuPct) ?? []
 
@@ -62,6 +88,7 @@ export default function HostDetail() {
     >
       <Loading error={error} offline={offline} hasData={!!host} />
       {actionError && <Banner tone="bad">{actionError}</Banner>}
+      {powerNotice && <Banner tone="warn">{powerNotice}</Banner>}
 
       {host && (
         <>
@@ -199,6 +226,59 @@ export default function HostDetail() {
             </>
           )}
 
+          <SectionTitle>Manage</SectionTitle>
+          <Link className="card" to={`/hosts/${hostId}/files`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Files</div>
+                <div className="sub">Browse the disk, read a config, edit it</div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
+          <Link className="card" to={`/hosts/${hostId}/cron`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Scheduled jobs</div>
+                <div className="sub">
+                  The crontab for {host.username}
+                  {host.username === 'root' ? '' : ' and for root'}
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
+
+          <Card>
+            <div className="title">Power</div>
+            <p className="sub" style={{ marginTop: 4 }}>
+              {host.isSelf
+                ? 'This is the machine Deployer runs on, so restarting it takes Deployer with it. It comes back when the machine does.'
+                : 'The host goes down a few seconds after you confirm, and Deployer reports it offline until it answers again.'}
+            </p>
+            {!host.sudoOk && (
+              <Banner tone="warn">
+                {host.username} needs passwordless sudo here before Deployer can restart the machine.
+              </Banner>
+            )}
+            <div className="actions">
+              <button
+                className="secondary"
+                onClick={() => setPowerAction('reboot')}
+                disabled={host.status !== 'online'}
+              >
+                Reboot
+              </button>
+              <button
+                className="danger"
+                onClick={() => setPowerAction('shutdown')}
+                disabled={host.status !== 'online'}
+              >
+                Shut down
+              </button>
+            </div>
+          </Card>
+
           <SectionTitle>Danger zone</SectionTitle>
           <Card>
             <p className="sub" style={{ marginTop: 0 }}>
@@ -265,6 +345,30 @@ export default function HostDetail() {
           onClose={() => setSettingUp(false)}
           onFinished={reload}
         />
+      )}
+
+      {powerAction && host && (
+        <Sheet
+          title={powerAction === 'reboot' ? `Reboot ${host.name}?` : `Shut down ${host.name}?`}
+          subtitle={
+            powerAction === 'reboot'
+              ? 'Everything running on the machine stops and starts again.'
+              : 'The machine powers off. Deployer cannot turn it back on — that needs a hand on the plug.'
+          }
+          onClose={() => setPowerAction(null)}
+        >
+          {host.isSelf && (
+            <Banner tone="warn">Deployer runs on this machine. It goes down with it.</Banner>
+          )}
+          <div className="actions">
+            <button className="secondary" onClick={() => setPowerAction(null)} disabled={powering}>
+              Cancel
+            </button>
+            <button className="danger" onClick={() => power(powerAction)} disabled={powering}>
+              {powering ? 'Working…' : powerAction === 'reboot' ? 'Reboot' : 'Shut down'}
+            </button>
+          </div>
+        </Sheet>
       )}
 
       {confirmDelete && (

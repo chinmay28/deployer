@@ -810,6 +810,172 @@ button.block {
   padding: 8px 12px;
 }
 
+/* ---------- the file browser ---------- */
+
+/* A row is two targets: the whole line opens the thing, and a wide-enough
+   corner opens what can be done to it. Splitting them is what keeps a mis-tap
+   from being a delete. */
+.file-row {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-row .file-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px 12px 14px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  font-weight: 400;
+}
+
+.file-row .file-open .title,
+.file-row .file-open .sub {
+  display: block;
+}
+
+.file-row .file-more {
+  flex: none;
+  width: 48px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 19px;
+  letter-spacing: 0.08em;
+}
+
+.file-row .file-more:active {
+  background: var(--surface-2);
+}
+
+.file-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--text-dim);
+}
+
+.file-icon.dir {
+  color: var(--accent);
+}
+
+.chevron {
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+  flex: none;
+  padding: 0 8px;
+}
+
+/* The path, one tap per ancestor. It scrolls sideways rather than wrapping, so
+   a deep path never pushes the listing down the screen. */
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  white-space: nowrap;
+  margin: -4px -4px 0;
+  padding: 0 4px 2px;
+  scrollbar-width: none;
+}
+
+.crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.crumbs .crumb {
+  flex: none;
+  min-height: 32px;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* The root crumb is the separator, so the one after it needs none of its own —
+   "/ etc / apt", not "/ / etc / apt". */
+.crumbs .crumb:nth-child(n + 3)::before {
+  content: '/';
+  color: var(--text-dim);
+  margin-right: 8px;
+}
+
+.crumbs .crumb:last-child {
+  color: var(--text);
+}
+
+/* ---------- the text editor ---------- */
+
+/* Tall enough to be worth typing in on a phone, and never wrapped: a config
+   file's lines are the unit of meaning, and folding them hides which is which. */
+.editor {
+  min-height: 46vh;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  margin-bottom: 4px;
+}
+
+/* ---------- segmented control and chips ---------- */
+
+.segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.segmented button {
+  flex: 1;
+  min-height: 36px;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 9px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.segmented button.on {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.chips .chip {
+  min-height: 36px;
+  padding: 6px 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
 .sparkline {
   display: block;
   width: 100%;
