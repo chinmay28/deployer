@@ -10,7 +10,7 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
-// Managing a host — its files, its crontab, its power state — is work Deployer
+// Managing a host — its files, its crontab, restarting it — is work Deployer
 // asks the host to do. So the failures worth telling apart are "you asked for
 // something impossible" (400) and "the host refused" (502): a missing file or a
 // read-only filesystem is not a bug in this API, and saying so as a 500 would
@@ -42,47 +42,34 @@ func (s *Server) writeOpError(w http.ResponseWriter, err error, action string) {
 	}
 }
 
-// --- power ---
+// --- reboot ---
 
-type powerInput struct {
-	Action string `json:"action"`
-}
-
-// handleHostPower reboots or shuts a host down. The host is marked offline
-// straight away: it is about to go, and a UI that keeps calling it online until
-// the next poll fails would be lying for half a minute.
-func (s *Server) handleHostPower(w http.ResponseWriter, r *http.Request) {
+// handleHostReboot restarts a host. The host is marked offline straight away:
+// it is about to go, and a UI that keeps calling it online until the next poll
+// fails would be lying for half a minute.
+//
+// Restarting is the only power state offered. Deployer can watch a machine come
+// back from a reboot; it cannot bring one back from off.
+func (s *Server) handleHostReboot(w http.ResponseWriter, r *http.Request) {
 	h, err := s.hostFromPath(r)
 	if err != nil {
-		s.writeStoreError(w, err, "power")
+		s.writeStoreError(w, err, "reboot")
 		return
 	}
-	var in powerInput
-	if err := decodeJSON(r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.Action != hostops.ActionReboot && in.Action != hostops.ActionShutdown {
-		writeError(w, http.StatusBadRequest, `action must be "reboot" or "shutdown"`)
-		return
-	}
-
 	ctx, cancel := opContext(r)
 	defer cancel()
-	if err := s.Ops.Power(ctx, h, in.Action); err != nil {
-		s.writeOpError(w, err, "power host")
+
+	if err := s.Ops.Reboot(ctx, h); err != nil {
+		s.writeOpError(w, err, "reboot host")
 		return
 	}
-	s.Log.Info("api: host power", "host", h.Name, "action", in.Action)
+	s.Log.Info("api: rebooting host", "host", h.Name)
 
-	reason := "rebooting — waiting for it to come back"
-	if in.Action == hostops.ActionShutdown {
-		reason = "shutting down"
-	}
+	const reason = "rebooting — waiting for it to come back"
 	if err := s.DB.MarkHostFailed(r.Context(), h.ID, store.StatusOffline, reason); err != nil {
 		s.Log.Error("api: mark host going down", "host", h.Name, "err", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"action": in.Action, "status": reason})
+	writeJSON(w, http.StatusOK, map[string]string{"status": reason})
 }
 
 // --- crontab ---

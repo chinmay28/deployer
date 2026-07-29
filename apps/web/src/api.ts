@@ -8,7 +8,6 @@ import type {
   HostTestResult,
   Installation,
   Overview,
-  PowerAction,
   ProvisionResult,
   Sample,
   SelfInfo,
@@ -78,12 +77,10 @@ export const api = {
     request<{ hostId: number; minutes: number; samples: Sample[] }>(
       `/api/hosts/${id}/metrics?minutes=${minutes}`,
     ),
-  /** Reboot or shut the machine down. It goes a few seconds after this returns. */
-  power: (id: number, action: PowerAction) =>
-    request<{ action: string; status: string }>(`/api/hosts/${id}/power`, {
-      method: 'POST',
-      ...json({ action }),
-    }),
+  /** Restart the machine. It goes down a few seconds after this returns.
+   *  There is no shutdown: Deployer cannot turn a host back on. */
+  reboot: (id: number) =>
+    request<{ status: string }>(`/api/hosts/${id}/reboot`, { method: 'POST' }),
 
   /** An empty user means the account Deployer signs in as. */
   crontab: (id: number, user = '') =>

@@ -59,7 +59,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/test", s.handleTestHost)
 	mux.HandleFunc("POST /api/hosts/{id}/provision", s.handleProvisionHost)
 	mux.HandleFunc("GET /api/hosts/{id}/metrics", s.handleHostMetrics)
-	mux.HandleFunc("POST /api/hosts/{id}/power", s.handleHostPower)
+	mux.HandleFunc("POST /api/hosts/{id}/reboot", s.handleHostReboot)
 
 	mux.HandleFunc("GET /api/hosts/{id}/cron", s.handleGetCrontab)
 	mux.HandleFunc("PUT /api/hosts/{id}/cron", s.handlePutCrontab)

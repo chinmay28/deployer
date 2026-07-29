@@ -49,14 +49,16 @@ func TestFileRequestsValidateThePath(t *testing.T) {
 	}
 }
 
-func TestPowerValidatesTheAction(t *testing.T) {
+// Restarting is the only power state there is: a host can be brought back from
+// a reboot, and Deployer cannot bring one back from off.
+func TestThereIsNoShutdownRoute(t *testing.T) {
 	_, h := testServer(t, "")
 	id := newHost(t, h)
 
-	for _, body := range []string{`{"action":"halt"}`, `{"action":""}`, `{}`, `{"action":"reboot; ls"}`} {
-		w := do(t, h, "POST", fmt.Sprintf("/api/hosts/%d/power", id), body)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("power %s = %d, want 400 (body %s)", body, w.Code, w.Body)
+	for _, path := range []string{"/api/hosts/%d/power", "/api/hosts/%d/shutdown"} {
+		w := do(t, h, "POST", fmt.Sprintf(path, id), `{"action":"shutdown"}`)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404 — there is no such endpoint", path, w.Code)
 		}
 	}
 }
@@ -66,7 +68,7 @@ func TestPowerValidatesTheAction(t *testing.T) {
 func TestHostOperationsOnAMissingHost(t *testing.T) {
 	_, h := testServer(t, "")
 	cases := []struct{ method, path, body string }{
-		{"POST", "/api/hosts/999/power", `{"action":"reboot"}`},
+		{"POST", "/api/hosts/999/reboot", ""},
 		{"GET", "/api/hosts/999/cron", ""},
 		{"PUT", "/api/hosts/999/cron", `{"user":"","content":""}`},
 		{"GET", "/api/hosts/999/files?path=/etc", ""},
@@ -96,7 +98,7 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 			t.Errorf("GET %s without a session = %d, want 401", path, w.Code)
 		}
 	}
-	if w := do(t, h, "POST", "/api/hosts/1/power", `{"action":"reboot"}`); w.Code != http.StatusUnauthorized {
-		t.Errorf("power without a session = %d, want 401", w.Code)
+	if w := do(t, h, "POST", "/api/hosts/1/reboot", ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("reboot without a session = %d, want 401", w.Code)
 	}
 }
