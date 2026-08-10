@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { Page } from '../components/Layout'
+import { Fab, Page } from '../components/Layout'
 import { ServiceBadge } from '../components/status'
 import { Badge, Banner, Card, Empty, Loading, useLoader } from '../components/ui'
 import { serviceName, uptime } from '../lib/format'
@@ -203,6 +203,10 @@ export default function HostServices() {
           </Card>
         </>
       )}
+
+      {/* Adding sits in the corner the thumb already rests in, the way it does
+          on the tabs that can add things. */}
+      <Fab to={`/hosts/${hostId}/service/new`} label="Add a service" />
     </Page>
   )
 }

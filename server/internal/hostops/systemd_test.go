@@ -1,6 +1,8 @@
 package hostops
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,12 +30,17 @@ while [ $# -gt 0 ]; do
     --no-pager|--) ;;
     -p) shift;;
     show) mode=show;;
-    daemon-reload) mode=daemon-reload;;
+    cat) mode=cat;;
+    daemon-reload|reset-failed) mode=$1;;
     start|stop|restart|reload|enable|disable) mode=$1;;
     *) units="$units $1";;
   esac
   shift
 done
+if [ "$mode" = cat ]; then
+  for u in $units; do [ -f "$dir/$u.exists" ] || exit 1; done
+  exit 0
+fi
 if [ "$mode" = show ]; then
   for u in $units; do
     if [ -f "$dir/$u.props" ]; then cat "$dir/$u.props"
@@ -586,6 +593,217 @@ func TestClampLines(t *testing.T) {
 	for in, want := range cases {
 		if got := clampLines(in); got != want {
 			t.Errorf("clampLines(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// createUnit runs the real install script the way the SSH path would.
+func createUnit(t *testing.T, name, dir, content string, path []string) (string, int) {
+	t.Helper()
+	body := base64.StdEncoding.EncodeToString([]byte(ensureFinalNewline(content)))
+	return runScript(t, asUser(writeUnitScript, name, dir), body, path...)
+}
+
+func TestCreateUnitWritesTheFileAndReloadsSystemd(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	dir := t.TempDir()
+	props(t, state, "photos.service", "Description=Photo sync", "LoadState=loaded", "ActiveState=inactive")
+
+	const content = "[Unit]\nDescription=Photo sync\n\n[Service]\nExecStart=/usr/local/bin/sync\n"
+	out, code := createUnit(t, "photos.service", dir, content, path)
+	if code != 0 {
+		t.Fatalf("creating the unit exited %d", code)
+	}
+
+	written := filepath.Join(dir, "photos.service")
+	body, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatalf("the unit file was not written: %v", err)
+	}
+	if string(body) != content {
+		t.Errorf("wrote %q, want %q", body, content)
+	}
+	// Readable by everyone, writable by root: what systemd expects of a unit.
+	info, err := os.Stat(written)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("mode is %o, want 644 — mktemp's 600 has to be widened", perm)
+	}
+
+	// A unit file systemd has not been told about is a file, not a service.
+	log, _ := os.ReadFile(filepath.Join(state, "actions.log"))
+	if !strings.Contains(string(log), "daemon-reload") {
+		t.Errorf("systemctl saw %q, want a daemon-reload after the write", log)
+	}
+
+	// And the answer describes what was just created, so the UI can show it
+	// without asking again.
+	list := parseUnitList(out)
+	if len(list.Units) != 1 || list.Units[0].Name != "photos.service" || list.Units[0].Load != "loaded" {
+		t.Errorf("units = %+v, want the service that was just written", list.Units)
+	}
+}
+
+// Writing over an existing unit file would replace something someone else put
+// there, with no way back.
+func TestCreateUnitRefusesToWriteOverAFile(t *testing.T) {
+	_, path := withFakeSystemctl(t)
+	dir := t.TempDir()
+	unitFile(t, dir, "photos.service")
+
+	out, code := createUnit(t, "photos.service", dir, "[Unit]\nDescription=different\n", path)
+	if code == 0 {
+		t.Fatalf("overwriting an existing unit file succeeded (%q)", out)
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, "photos.service")); string(body) != "[Unit]\n" {
+		t.Errorf("the existing file is now %q, want it untouched", body)
+	}
+}
+
+// A unit in /etc/systemd/system named after one the distribution ships does not
+// replace it, it shadows it. Doing that by accident from a phone — to sshd, of
+// all things — is not a mistake to leave available.
+func TestCreateUnitRefusesANameSystemdAlreadyKnows(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	dir := t.TempDir()
+	// The distribution's sshd: systemd knows the name, though nothing of it is
+	// in the directory Deployer writes to.
+	if err := os.WriteFile(filepath.Join(state, "ssh.service.exists"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := createUnit(t, "ssh.service", dir, "[Unit]\nDescription=mine now\n", path)
+	if code == 0 {
+		t.Fatalf("shadowing the distribution's ssh.service was allowed (%q)", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ssh.service")); err == nil {
+		t.Error("the unit file was written anyway")
+	}
+}
+
+// Deleting takes the enable symlinks, the file, and the drop-in overrides that
+// are meaningless without it — and clears the failed state, so a service that
+// died on the way out does not haunt `systemctl --failed` after it is gone.
+func TestRemoveUnitTakesTheFileAndItsDropIns(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	dir := t.TempDir()
+	unitFile(t, dir, "photos.service")
+	unit := filepath.Join(dir, "photos.service")
+	if err := os.MkdirAll(unit+".d", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unit+".d", "override.conf"), []byte("[Service]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runScript(t, asUser(removeUnitScript, "photos.service", unit), "", path...)
+	if code != 0 {
+		t.Fatalf("deleting the unit exited %d", code)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Errorf("said %q, want the marker that says it worked", out)
+	}
+	if _, err := os.Stat(unit); !os.IsNotExist(err) {
+		t.Error("the unit file is still there")
+	}
+	if _, err := os.Stat(unit + ".d"); !os.IsNotExist(err) {
+		t.Error("the drop-in directory outlived the unit it belonged to")
+	}
+
+	log, _ := os.ReadFile(filepath.Join(state, "actions.log"))
+	for _, want := range []string{"disable photos.service", "daemon-reload", "reset-failed photos.service"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("systemctl never saw %q. It saw:\n%s", want, log)
+		}
+	}
+}
+
+func TestRemoveUnitOnAFileThatIsNotThere(t *testing.T) {
+	_, path := withFakeSystemctl(t)
+	missing := filepath.Join(t.TempDir(), "gone.service")
+	if _, code := runScript(t, asUser(removeUnitScript, "gone.service", missing), "", path...); code == 0 {
+		t.Error("deleting a unit file that does not exist reported success")
+	}
+}
+
+// The two things deleting must never do: take a service that is still running,
+// or take a file that belongs to the package manager.
+func TestRemovableRefusesWhatMustNotBeDeleted(t *testing.T) {
+	local := "/etc/systemd/system/photos.service"
+	cases := []struct {
+		name string
+		unit Unit
+		want error
+	}{
+		{"a stopped service", Unit{Name: "photos.service", Active: "inactive", Path: local}, nil},
+		{"a failed service", Unit{Name: "photos.service", Active: "failed", Path: local}, nil},
+		{"one installed in /usr/local", Unit{Name: "a.service", Active: "inactive",
+			Path: "/usr/local/lib/systemd/system/a.service"}, nil},
+		{"a running service", Unit{Name: "photos.service", Active: "active", Path: local}, ErrUnitRunning},
+		{"one still starting", Unit{Name: "photos.service", Active: "activating", Path: local}, ErrUnitRunning},
+		{"one still stopping", Unit{Name: "photos.service", Active: "deactivating", Path: local}, ErrUnitRunning},
+		{"the distribution's own", Unit{Name: "ssh.service", Active: "inactive",
+			Path: "/usr/lib/systemd/system/ssh.service"}, ErrInvalid},
+		{"one on the older vendor path", Unit{Name: "ssh.service", Active: "inactive",
+			Path: "/lib/systemd/system/ssh.service"}, ErrInvalid},
+		{"one systemd has no file for", Unit{Name: "ghost.service", Active: "inactive"}, ErrInvalid},
+		{"one below the unit directory", Unit{Name: "a.service", Active: "inactive",
+			Path: "/etc/systemd/system/multi-user.target.wants/a.service"}, ErrInvalid},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := removable(&tc.unit)
+			if tc.want == nil {
+				if err != nil {
+					t.Errorf("removable = %v, want it allowed", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("removable = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestOwnUnitFile(t *testing.T) {
+	cases := map[string]bool{
+		"/etc/systemd/system/photos.service":                true,
+		"/usr/local/lib/systemd/system/photos.service":      true,
+		"/usr/lib/systemd/system/ssh.service":               false,
+		"/lib/systemd/system/ssh.service":                   false,
+		"/run/systemd/generator/x.service":                  false,
+		"/etc/systemd/system/x.target.wants/photos.service": false,
+		"/etc/systemd/user/photos.service":                  false,
+		// Cleaned before it is judged, so neither a tidy path nor one that
+		// tries to walk its way in is taken at face value.
+		"/etc/systemd/system/./photos.service":                            true,
+		"/etc/systemd/system/x.target.wants/../photos.service":            true,
+		"/etc/systemd/system/../../../usr/lib/systemd/system/ssh.service": false,
+		"/usr/lib/systemd/system/../../etc/systemd/system/photos.service": false,
+	}
+	for in, want := range cases {
+		if got := ownUnitFile(in); got != want {
+			t.Errorf("ownUnitFile(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestLoadError(t *testing.T) {
+	cases := map[string]string{
+		`org.freedesktop.DBus.Error.InvalidArgs "Invalid argument"`: "Invalid argument",
+		`org.freedesktop.systemd1.NoSuchUnit "Unit not found."`:     "Unit not found.",
+		`n/a "n/a"`: "n/a",
+		"":          "",
+		"  ":        "",
+		"no quotes": "no quotes",
+		`empty ""`:  `empty ""`,
+	}
+	for in, want := range cases {
+		if got := loadError(in); got != want {
+			t.Errorf("loadError(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -3,8 +3,10 @@ package hostops
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -26,6 +28,8 @@ import (
 // unlike `status` it never wraps, colours or truncates what it says.
 
 const (
+	// MaxUnitBytes bounds a unit file. Real ones are a dozen lines.
+	MaxUnitBytes = 64 << 10
 	// MaxUnits bounds one listing. A host with more hand-written services than
 	// this has bigger problems than a phone screen.
 	MaxUnits = 300
@@ -87,6 +91,9 @@ type Unit struct {
 	// Result is why it last stopped — "success", "exit-code", "signal",
 	// "timeout" — which is the first thing to know about a failed unit.
 	Result string `json:"result"`
+	// LoadError is why systemd could not read the unit file, on the units
+	// where it could not. Empty otherwise.
+	LoadError string `json:"loadError,omitempty"`
 }
 
 // UnitList is every hand-installed service on a host.
@@ -113,7 +120,7 @@ type UnitLog struct {
 // because it is what separates one unit's block from the next.
 const showProps = `-p Id -p Description -p LoadState -p ActiveState -p SubState ` +
 	`-p UnitFileState -p FragmentPath -p MainPID -p MemoryCurrent -p NRestarts ` +
-	`-p Result -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic`
+	`-p Result -p LoadError -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic`
 
 // unitDirs is where an administrator's own unit files live. /usr/lib and /lib
 // are the distribution's, and everything in them is somebody else's business.
@@ -238,6 +245,192 @@ func (s *Service) Act(ctx context.Context, h *store.Host, name, action string) e
 		return unitError(res, h, fmt.Sprintf("could not %s %s", action, clean))
 	}
 	return nil
+}
+
+// writeUnitScript installs a new unit file and makes systemd read it. It
+// refuses to write over anything: a name systemd already knows — including one
+// the distribution ships — would be shadowed rather than replaced, and a
+// service that quietly overrides sshd is not something to do from a phone.
+//
+// The file arrives base64-encoded on stdin, and is written through a temporary
+// file in the same directory so systemd never sees half of one.
+const writeUnitScript = `set -u
+u=$1
+dir=$2
+command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on this host\n' >&2; exit 2; }
+mkdir -p -- "$dir" || { printf 'cannot create %s\n' "$dir" >&2; exit 3; }
+p="$dir/$u"
+[ -e "$p" ] && { printf '%s already exists\n' "$p" >&2; exit 4; }
+if systemctl cat -- "$u" >/dev/null 2>&1; then
+  printf 'this host already has a service called %s\n' "$u" >&2; exit 5
+fi
+tmp=$(mktemp "$dir/.deployer.XXXXXX") || { printf 'cannot write in %s\n' "$dir" >&2; exit 6; }
+trap 'rm -f "$tmp"' EXIT
+base64 -d > "$tmp" || { printf 'could not decode the unit file\n' >&2; exit 7; }
+chmod 644 -- "$tmp" 2>/dev/null || true
+mv -f -- "$tmp" "$p" || { printf 'could not write %s\n' "$p" >&2; exit 8; }
+trap - EXIT
+systemctl daemon-reload || { printf 'could not reload systemd\n' >&2; exit 9; }
+printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
+printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+printf '@@units\n'
+systemctl show --no-pager ` + showProps + ` -- "$u"
+`
+
+// CreateUnit writes a new service and hands it to systemd. It is created
+// stopped and not enabled; starting it is a separate decision, and a separate
+// call, so a unit that will not start is a service sitting there rather than a
+// half-finished install.
+//
+// systemd is the one that says whether the file is a unit file. Anything it
+// refuses to load is taken straight back off the disk — a file in
+// /etc/systemd/system that systemd cannot read is worse than no file at all,
+// because it stays there being wrong.
+func (s *Service) CreateUnit(ctx context.Context, h *store.Host, name, content string) (*Unit, error) {
+	clean, err := CleanUnit(name)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(clean, "@.service") {
+		return nil, invalid("Deployer does not create template units")
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, invalid("a unit file needs something in it")
+	}
+	if len(content) > MaxUnitBytes {
+		return nil, invalid("that unit file is too large (over %d KB)", MaxUnitBytes/1024)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(ensureFinalNewline(content)))
+	res, err := s.run(ctx, h, elevate(writeUnitScript, clean, unitInstallDir), encoded)
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, unitError(res, h, "could not create "+clean)
+	}
+
+	list := parseUnitList(res.Stdout)
+	if len(list.Units) == 0 {
+		return nil, fmt.Errorf("%s was written, but the host said nothing about it", clean)
+	}
+	unit := list.Units[0]
+	if unit.Load != "loaded" {
+		s.discardUnit(ctx, h, clean)
+		if unit.LoadError != "" {
+			return nil, fmt.Errorf("systemd would not load that unit file: %s", unit.LoadError)
+		}
+		return nil, fmt.Errorf("systemd would not load that unit file (%s)", unit.Load)
+	}
+	return &unit, nil
+}
+
+// unitInstallDir is where a unit Deployer creates goes. /etc/systemd/system is
+// the administrator's own directory and the one that wins over every other.
+const unitInstallDir = "/etc/systemd/system"
+
+// removeUnitScript takes a unit off the machine: the enable symlinks first, so
+// nothing is left pointing at a file that has gone, then the file, then any
+// drop-in directory belonging to it, which is meaningless without it. Clearing
+// the failed state last stops a service that died on its way out from haunting
+// `systemctl --failed` after it no longer exists.
+const removeUnitScript = `set -u
+u=$1
+p=$2
+command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on this host\n' >&2; exit 2; }
+[ -e "$p" ] || { printf 'no such unit file: %s\n' "$p" >&2; exit 3; }
+systemctl disable -- "$u" >/dev/null 2>&1 || true
+rm -f -- "$p" || { printf 'could not delete %s\n' "$p" >&2; exit 4; }
+rm -rf -- "$p.d"
+systemctl daemon-reload || { printf 'could not reload systemd\n' >&2; exit 5; }
+systemctl reset-failed -- "$u" >/dev/null 2>&1 || true
+printf 'removed\n'
+`
+
+// RemoveUnit deletes a service that is not running: its unit file, the symlinks
+// enabling it, and its drop-in overrides. Whatever the service actually ran is
+// left where it is — this removes systemd's knowledge of it, not the program.
+//
+// Two things it will not do. A running service is stopped first, deliberately
+// by the person deleting it, because deleting the unit of something still
+// running leaves the process up with nothing left to describe or stop it. And
+// only a unit file in an administrator's own directory can go: the
+// distribution's, in /usr/lib, belongs to the package manager.
+func (s *Service) RemoveUnit(ctx context.Context, h *store.Host, name string) error {
+	clean, err := CleanUnit(name)
+	if err != nil {
+		return err
+	}
+	unit, err := s.Unit(ctx, h, clean)
+	if err != nil {
+		return err
+	}
+	if err := removable(unit); err != nil {
+		return err
+	}
+
+	res, err := s.run(ctx, h, elevate(removeUnitScript, clean, unit.Path), "")
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return unitError(res, h, "could not delete "+clean)
+	}
+	return nil
+}
+
+// removable says whether a service can be deleted, and why not when it cannot.
+func removable(u *Unit) error {
+	switch u.Active {
+	case "active", "activating", "reloading", "deactivating":
+		return fmt.Errorf("%w: %s is still running — stop it first", ErrUnitRunning, u.Name)
+	}
+	if u.Path == "" {
+		return invalid("systemd has no unit file for %s to delete", u.Name)
+	}
+	if !ownUnitFile(u.Path) {
+		return invalid("%s belongs to the distribution, not to you — remove it with the package manager", u.Path)
+	}
+	return nil
+}
+
+// discardUnit removes a unit file Deployer has just written and that systemd
+// then refused. Whether the cleanup works is not reported: the failure it is
+// cleaning up after is the one worth telling the caller about.
+func (s *Service) discardUnit(ctx context.Context, h *store.Host, name string) {
+	_, _ = s.run(ctx, h, elevate(removeUnitScript, name, unitInstallDir+"/"+name), "")
+}
+
+// ownUnitFile reports whether a unit file is one an administrator put there, as
+// opposed to one the distribution ships.
+func ownUnitFile(p string) bool {
+	dir := path.Dir(path.Clean(p))
+	for _, own := range unitDirs {
+		if dir == own {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrUnitRunning means the service has to be stopped before what was asked can
+// happen. It is the caller's next step, not a failure of theirs.
+var ErrUnitRunning = errors.New("the service is still running")
+
+// loadError tidies systemd's LoadError, which is a D-Bus error name and a
+// message: `org.freedesktop.DBus.Error.InvalidArgs "Invalid argument"`. The
+// name is noise to everyone; the message is the part that says what is wrong.
+func loadError(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if open := strings.Index(value, `"`); open >= 0 {
+		if quoted := strings.TrimSuffix(value[open+1:], `"`); quoted != "" {
+			return quoted
+		}
+	}
+	return value
 }
 
 // reloadScript makes systemd re-read the unit files on disk. Editing a unit
@@ -404,6 +597,7 @@ func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
 		FileState:   props["UnitFileState"],
 		Path:        props["FragmentPath"],
 		Result:      props["Result"],
+		LoadError:   loadError(props["LoadError"]),
 		Template:    strings.HasSuffix(name, "@.service"),
 		MainPID:     atoi(props["MainPID"]),
 		Restarts:    atoi(props["NRestarts"]),

@@ -145,6 +145,8 @@ export interface ServiceUnit {
   sinceS: number
   /** Why it last stopped: 'success', 'exit-code', 'signal', 'timeout'. */
   result: string
+  /** Why systemd could not read the unit file, where it could not. */
+  loadError?: string
 }
 
 export interface ServiceList {

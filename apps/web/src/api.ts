@@ -109,6 +109,18 @@ export const api = {
       method: 'POST',
       ...json({ name, action }),
     }),
+  /** Writes a new unit file and hands it to systemd. The service is created
+   *  stopped: starting it and enabling it are separate calls, so a unit that
+   *  will not start is a service that exists and did not start. systemd
+   *  validates the file, and anything it refuses to load is taken back off
+   *  the disk rather than left there being wrong. */
+  createService: (id: number, name: string, content: string) =>
+    request<ServiceUnit>(`/api/hosts/${id}/services`, { method: 'POST', ...json({ name, content }) }),
+  /** Deletes a service that is not running: its unit file, the symlinks
+   *  enabling it, and its drop-in overrides. Whatever it ran is left alone. */
+  deleteService: (id: number, name: string) =>
+    request<void>(`/api/hosts/${id}/services?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
   /** daemon-reload: what turns an edited unit file into an edited service. */
   reloadServices: (id: number) =>
     request<{ status: string }>(`/api/hosts/${id}/services/reload`, { method: 'POST' }),

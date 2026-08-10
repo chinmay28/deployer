@@ -65,6 +65,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/hosts/{id}/cron", s.handlePutCrontab)
 
 	mux.HandleFunc("GET /api/hosts/{id}/services", s.handleListServices)
+	mux.HandleFunc("POST /api/hosts/{id}/services", s.handleCreateService)
+	mux.HandleFunc("DELETE /api/hosts/{id}/services", s.handleDeleteService)
 	mux.HandleFunc("GET /api/hosts/{id}/services/unit", s.handleGetService)
 	mux.HandleFunc("GET /api/hosts/{id}/services/logs", s.handleServiceLogs)
 	mux.HandleFunc("POST /api/hosts/{id}/services/action", s.handleServiceAction)

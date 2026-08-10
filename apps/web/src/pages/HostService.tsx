@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Page } from '../components/Layout'
 import { BootBadge, ServiceBadge } from '../components/status'
@@ -41,6 +41,7 @@ export default function HostService() {
   const hostId = Number(id)
   const [params] = useSearchParams()
   const name = params.get('name') ?? ''
+  const navigate = useNavigate()
 
   const { data: host } = useLoader(() => api.host(hostId), [hostId])
   const {
@@ -52,6 +53,8 @@ export default function HostService() {
 
   const [busy, setBusy] = useState<ServiceAction | null>(null)
   const [confirm, setConfirm] = useState<ServiceAction | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
 
@@ -85,6 +88,19 @@ export default function HostService() {
   }
 
   const ask = (action: ServiceAction) => (CONFIRM[action] ? setConfirm(action) : run(action))
+
+  const remove = async () => {
+    setDeleting(true)
+    setFailure(null)
+    try {
+      await api.deleteService(hostId, name)
+      navigate(`/hosts/${hostId}/services`, { replace: true })
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : String(e))
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
 
   const active = unit?.active === 'active' || unit?.active === 'reloading'
   const usable = !!unit && !unit.template && unit.load !== 'not-found' && unit.load !== 'masked'
@@ -277,7 +293,63 @@ export default function HostService() {
           </Card>
 
           <UnitFile hostId={hostId} unit={unit} onChanged={reload} />
+
+          {/* Deleting takes a unit file off the disk, so it is only offered for
+              the ones an administrator put there. The distribution's, in
+              /usr/lib, belong to the package manager, and the server refuses
+              those whatever this decides. */}
+          {ownUnitFile(unit.path) && (
+            <>
+              <SectionTitle>Danger zone</SectionTitle>
+              <Card>
+                <p className="sub" style={{ marginTop: 0 }}>
+                  Deleting removes <span className="mono">{unit.path}</span>, the links that
+                  start it at boot, and any drop-in overrides. Whatever it runs stays where it
+                  is — this removes systemd's knowledge of the service, not the program.
+                </p>
+                {active && (
+                  <Banner tone="warn">
+                    {short} is still running. Stop it first: deleting the unit of something
+                    still running leaves the process up with nothing left to describe or stop
+                    it.
+                  </Banner>
+                )}
+                <button
+                  className="danger block"
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={active || working || deleting}
+                >
+                  Delete this service
+                </button>
+              </Card>
+            </>
+          )}
         </>
+      )}
+
+      {confirmDelete && unit && (
+        <Sheet
+          title={`Delete ${short}?`}
+          subtitle="The unit file, the links that start it at boot, and its drop-in overrides all go. Nothing it installed or wrote is touched."
+          onClose={() => setConfirmDelete(false)}
+        >
+          <Banner tone="warn">
+            There is no undo. The unit file is not kept anywhere — copy it out first if you
+            might want it again.
+          </Banner>
+          <div className="actions">
+            <button
+              className="secondary"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              Keep it
+            </button>
+            <button className="danger" onClick={remove} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        </Sheet>
       )}
 
       {confirm && CONFIRM[confirm] && (
@@ -298,6 +370,15 @@ export default function HostService() {
       )}
     </Page>
   )
+}
+
+/** Where an administrator's own unit files live. The server decides this for
+ *  real; this only decides whether to offer the button. */
+const OWN_UNIT_DIRS = ['/etc/systemd/system', '/usr/local/lib/systemd/system']
+
+function ownUnitFile(path: string): boolean {
+  if (!path) return false
+  return OWN_UNIT_DIRS.includes(path.slice(0, path.lastIndexOf('/')))
 }
 
 /** DONE is what to say afterwards, in the past tense the button was in. */
