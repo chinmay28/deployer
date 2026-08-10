@@ -1,6 +1,6 @@
 // Package hostops runs administrative operations on a host over SSH: browsing
-// and editing files, reading and writing the crontab, and restarting the
-// machine.
+// and editing files, managing the systemd services someone installed by hand,
+// reading and writing the crontab, and restarting the machine.
 //
 // Like the rest of Deployer there is no agent on the host. Everything here is a
 // short POSIX shell script fed to one SSH session, with every value the user

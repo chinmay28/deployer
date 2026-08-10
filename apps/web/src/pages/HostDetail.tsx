@@ -231,6 +231,17 @@ export default function HostDetail() {
               <span className="chevron">›</span>
             </div>
           </Link>
+          <Link className="card" to={`/hosts/${hostId}/services`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Services</div>
+                <div className="sub">
+                  Start, stop and edit what was installed here by hand
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
           <Link className="card" to={`/hosts/${hostId}/cron`}>
             <div className="row between">
               <div className="grow">

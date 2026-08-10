@@ -10,6 +10,8 @@ import HostDetail from './pages/HostDetail'
 import HostFile from './pages/HostFile'
 import HostFiles from './pages/HostFiles'
 import HostForm from './pages/HostForm'
+import HostService from './pages/HostService'
+import HostServices from './pages/HostServices'
 import Hosts from './pages/Hosts'
 import NotFound from './pages/NotFound'
 import Overview from './pages/Overview'
@@ -42,6 +44,8 @@ export default function App() {
         <Route path="/hosts/:id/files" element={<HostFiles />} />
         <Route path="/hosts/:id/file" element={<HostFile />} />
         <Route path="/hosts/:id/cron" element={<HostCron />} />
+        <Route path="/hosts/:id/services" element={<HostServices />} />
+        <Route path="/hosts/:id/service" element={<HostService />} />
         <Route path="/apps" element={<Apps />} />
         <Route path="/apps/new" element={<AppForm />} />
         <Route path="/apps/:id" element={<AppDetail />} />

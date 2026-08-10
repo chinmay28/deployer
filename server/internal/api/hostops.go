@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
-// Managing a host — its files, its crontab, restarting it — is work Deployer
-// asks the host to do. So the failures worth telling apart are "you asked for
+// Managing a host — its files, its services, its crontab, restarting it — is
+// work Deployer asks the host to do. So the failures worth telling apart are "you asked for
 // something impossible" (400) and "the host refused" (502): a missing file or a
 // read-only filesystem is not a bug in this API, and saying so as a 500 would
 // send the user looking in the wrong place.
@@ -19,6 +20,12 @@ import (
 // opTimeout bounds one operation on a host. Generous enough for a slow
 // handshake to a sleeping Pi, short enough that a hung host frees the request.
 const opTimeout = 30 * time.Second
+
+// unitTimeout bounds a systemctl verb. Starting or stopping a service is the
+// one thing here that is allowed to take its time: systemd's own default is to
+// wait 90 seconds for a unit to come up or go down, and giving up before it
+// does would report a failure that has not happened yet.
+const unitTimeout = 110 * time.Second
 
 // opContext gives a host operation its own deadline.
 func opContext(r *http.Request) (context.Context, context.CancelFunc) {
@@ -126,6 +133,141 @@ func (s *Server) handlePutCrontab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, cron)
+}
+
+// --- services ---
+
+// handleListServices lists the services someone installed on the host by hand.
+// Distribution units are left out on purpose: the point of the screen is the
+// handful of things this machine was set up to run.
+func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "list services")
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	units, err := s.Ops.Units(ctx, h)
+	if err != nil {
+		s.writeOpError(w, err, "list services")
+		return
+	}
+	writeJSON(w, http.StatusOK, units)
+}
+
+func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "read service")
+		return
+	}
+	name, ok := queryUnit(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	unit, err := s.Ops.Unit(ctx, h, name)
+	if err != nil {
+		s.writeOpError(w, err, "read service")
+		return
+	}
+	writeJSON(w, http.StatusOK, unit)
+}
+
+func (s *Server) handleServiceLogs(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "read service log")
+		return
+	}
+	name, ok := queryUnit(w, r)
+	if !ok {
+		return
+	}
+	// An unreadable or absent line count means the default, not a 400: the
+	// number is the UI's business and any of them gives a usable answer.
+	lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	log, err := s.Ops.Log(ctx, h, name, lines)
+	if err != nil {
+		s.writeOpError(w, err, "read service log")
+		return
+	}
+	writeJSON(w, http.StatusOK, log)
+}
+
+type serviceActionInput struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
+
+// handleServiceAction runs one systemctl verb and answers with the state the
+// service ended up in, so the screen that asked does not have to guess whether
+// "start" left it running or failed a second later.
+func (s *Server) handleServiceAction(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "manage service")
+		return
+	}
+	var in serviceActionInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), unitTimeout)
+	defer cancel()
+
+	if err := s.Ops.Act(ctx, h, in.Name, in.Action); err != nil {
+		s.writeOpError(w, err, "manage service")
+		return
+	}
+	s.Log.Info("api: systemctl", "host", h.Name, "unit", in.Name, "action", in.Action)
+
+	unit, err := s.Ops.Unit(ctx, h, in.Name)
+	if err != nil {
+		// The action worked; failing to read the state back afterwards is the
+		// next request's problem, not this one's.
+		writeJSON(w, http.StatusOK, map[string]string{"name": in.Name, "action": in.Action})
+		return
+	}
+	writeJSON(w, http.StatusOK, unit)
+}
+
+// handleReloadServices makes systemd re-read the unit files on disk, which is
+// what turns an edited unit file into an edited service.
+func (s *Server) handleReloadServices(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "reload services")
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	if err := s.Ops.Reload(ctx, h); err != nil {
+		s.writeOpError(w, err, "reload services")
+		return
+	}
+	s.Log.Info("api: daemon-reload", "host", h.Name)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
+}
+
+// queryUnit reads and validates the ?name= parameter, answering the request
+// itself when it is missing or is not a service name.
+func queryUnit(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name, err := hostops.CleanUnit(r.URL.Query().Get("name"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return name, true
 }
 
 // --- files ---
