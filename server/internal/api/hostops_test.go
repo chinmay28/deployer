@@ -49,6 +49,51 @@ func TestFileRequestsValidateThePath(t *testing.T) {
 	}
 }
 
+// The service screens name a unit in the query string or the body, and a name
+// that is not a service name is the request's problem, not the host's.
+func TestServiceRequestsValidateTheUnitName(t *testing.T) {
+	_, h := testServer(t, "")
+	id := newHost(t, h)
+
+	cases := []struct{ name, method, path, body string }{
+		{"no name", "GET", "/api/hosts/%d/services/unit", ""},
+		{"a timer", "GET", "/api/hosts/%d/services/unit?name=backup.timer", ""},
+		{"a shell fragment", "GET", "/api/hosts/%d/services/unit?name=photos.service;reboot", ""},
+		{"a path", "GET", "/api/hosts/%d/services/unit?name=../../etc/passwd", ""},
+		{"logs without a name", "GET", "/api/hosts/%d/services/logs", ""},
+		{"logs for a socket", "GET", "/api/hosts/%d/services/logs?name=x.socket", ""},
+		{"an action with no unit", "POST", "/api/hosts/%d/services/action", `{"name":"","action":"start"}`},
+		{"an unknown field", "POST", "/api/hosts/%d/services/action", `{"name":"a.service","action":"start","force":true}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := do(t, h, tc.method, fmt.Sprintf(tc.path, id), tc.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", w.Code, w.Body)
+			}
+			if decode[apiError](t, w).Error == "" {
+				t.Error("a 400 should say what was wrong with the request")
+			}
+		})
+	}
+}
+
+// Deployer asks systemd to start, stop and restart things. Masking a unit,
+// isolating a target or powering the machine off from here are not on offer,
+// and the API is where that stops rather than the UI.
+func TestServiceActionsAreLimitedToWhatTheUIOffers(t *testing.T) {
+	_, h := testServer(t, "")
+	id := newHost(t, h)
+
+	for _, action := range []string{"mask", "isolate", "kill", "poweroff", "edit", ""} {
+		body := fmt.Sprintf(`{"name":"photos.service","action":%q}`, action)
+		w := do(t, h, "POST", fmt.Sprintf("/api/hosts/%d/services/action", id), body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q = %d, want 400 — it should never reach the host", action, w.Code)
+		}
+	}
+}
+
 // Restarting is the only power state there is: a host can be brought back from
 // a reboot, and Deployer cannot bring one back from off.
 func TestThereIsNoShutdownRoute(t *testing.T) {
@@ -71,6 +116,11 @@ func TestHostOperationsOnAMissingHost(t *testing.T) {
 		{"POST", "/api/hosts/999/reboot", ""},
 		{"GET", "/api/hosts/999/cron", ""},
 		{"PUT", "/api/hosts/999/cron", `{"user":"","content":""}`},
+		{"GET", "/api/hosts/999/services", ""},
+		{"GET", "/api/hosts/999/services/unit?name=photos.service", ""},
+		{"GET", "/api/hosts/999/services/logs?name=photos.service", ""},
+		{"POST", "/api/hosts/999/services/action", `{"name":"photos.service","action":"restart"}`},
+		{"POST", "/api/hosts/999/services/reload", ""},
 		{"GET", "/api/hosts/999/files?path=/etc", ""},
 		{"GET", "/api/hosts/999/files/content?path=/etc/hosts", ""},
 		{"PUT", "/api/hosts/999/files/content", `{"path":"/tmp/x","content":"x"}`},
@@ -93,6 +143,9 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 		"/api/hosts/1/files?path=/etc",
 		"/api/hosts/1/files/content?path=/etc/hosts",
 		"/api/hosts/1/cron",
+		"/api/hosts/1/services",
+		"/api/hosts/1/services/unit?name=photos.service",
+		"/api/hosts/1/services/logs?name=photos.service",
 	} {
 		if w := do(t, h, "GET", path, ""); w.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s without a session = %d, want 401", path, w.Code)
@@ -100,5 +153,9 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 	}
 	if w := do(t, h, "POST", "/api/hosts/1/reboot", ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("reboot without a session = %d, want 401", w.Code)
+	}
+	body := `{"name":"photos.service","action":"restart"}`
+	if w := do(t, h, "POST", "/api/hosts/1/services/action", body); w.Code != http.StatusUnauthorized {
+		t.Errorf("restarting a service without a session = %d, want 401", w.Code)
 	}
 }

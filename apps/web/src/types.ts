@@ -119,6 +119,58 @@ export interface Crontab {
   exists: boolean
 }
 
+/** One systemd service, as `systemctl show` describes it. Deployer lists the
+ *  ones an administrator installed by hand, not the distribution's own. */
+export interface ServiceUnit {
+  name: string
+  description: string
+  /** systemd's LoadState: 'loaded', 'not-found', 'masked', 'error'. */
+  load: string
+  /** ActiveState: 'active', 'inactive', 'failed', 'activating', 'deactivating'. */
+  active: string
+  /** The finer state within active: 'running', 'exited', 'dead'. */
+  sub: string
+  /** UnitFileState: 'enabled', 'disabled', 'static', 'masked', or empty. */
+  fileState: string
+  /** The unit file systemd read, which is the one the editor opens. */
+  path: string
+  /** True for a foo@.service, which is a pattern rather than a service. */
+  template: boolean
+  mainPid: number
+  /** What its cgroup is using now; 0 where systemd does not account for it. */
+  memory: number
+  /** How many times systemd has restarted it by itself. */
+  restarts: number
+  /** How long it has been in its current state, in seconds. */
+  sinceS: number
+  /** Why it last stopped: 'success', 'exit-code', 'signal', 'timeout'. */
+  result: string
+}
+
+export interface ServiceList {
+  units: ServiceUnit[]
+  /** Who the commands ran as — root wherever passwordless sudo is set up. */
+  asUser: string
+  /** The host has more hand-installed units than Deployer will list. */
+  truncated: boolean
+}
+
+export interface ServiceLog {
+  name: string
+  lines: number
+  content: string
+  /** The log was longer than Deployer will carry and lost its beginning. */
+  truncated: boolean
+  asUser: string
+}
+
+/** Everything Deployer will ask systemd to do. */
+export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
+
+/** An action answers with the service as it now is — or, where reading it back
+ *  afterwards failed, with just what was done. */
+export type ServiceActionResult = ServiceUnit | { name: string; action: string }
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

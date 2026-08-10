@@ -176,6 +176,31 @@ Two things are deliberately not editable. A file over 512 KB comes back
 truncated, and saving the part you can see would throw the rest away; a binary
 file is shown as binary rather than run through a textarea that would mangle it.
 
+**Services** is every systemd service someone installed on the machine by
+hand — the unit files under `/etc/systemd/system` and
+`/usr/local/lib/systemd/system`. The distribution's own hundreds, in
+`/usr/lib/systemd/system`, are not what you pick up a phone to fix, so they are
+left out; where a unit file lives is the same rule systemd itself uses to decide
+who wins. Filter chips cut the list four ways and put failures first.
+
+Tapping one opens what it is doing — running, failed and why, for how long, its
+memory and its PID — with **Start**, **Stop**, **Restart** and **Reload**, a
+toggle for whether it comes back after a reboot, and the tail of its journal at
+50, 200 or 1000 lines. Deployer waits for `systemctl` to finish rather than
+returning as soon as the command is sent, so a service that takes half a minute
+to come up takes half a minute to answer.
+
+The unit file is editable on the same screen, and saving runs
+`systemctl daemon-reload` straight afterwards — a unit file edited and not
+reloaded is a change that has not happened, which is the most common way an edit
+from a phone appears to do nothing. The service keeps running the old settings
+until it is restarted, and the screen says so.
+
+The state comes from one `systemctl show` per screen: key=value lines that parse
+the same on every version worth supporting, and unlike `status` it never wraps,
+colours or truncates what it says. None of these screens poll — each is an SSH
+session, so they refresh when you ask.
+
 **Scheduled jobs** edits the crontab, the whole file at once, the way
 `crontab -e` does — for the user Deployer signs in as, and for root. Cron is
 what validates it: a crontab it refuses to parse is not installed, the old one
@@ -282,6 +307,9 @@ codes, cancellation, log streaming and health checks.
 The shell scripts behind host management are tested by running them: against a
 real filesystem, through a real shell, with the parsers the SSH path uses, both
 with GNU `find` and with it forced to fail so the busybox fallback is covered.
+`systemctl` and `journalctl` are stood in for by scripts that answer the way the
+real ones do, so the listing, the parsing and the fallback for a `journalctl`
+too old to know `--no-hostname` are all exercised without a running systemd.
 Quoting is tested the same way — every path a person could type is handed to
 `/bin/sh` and has to come back out the other side unchanged.
 
@@ -306,6 +334,11 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/reboot`            | restart the machine (there is no shutdown) |
 | `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
 | `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
+| `GET`    | `/api/hosts/{id}/services`          | hand-installed systemd services and their state |
+| `GET`    | `/api/hosts/{id}/services/unit`     | one service, `?name=`                |
+| `GET`    | `/api/hosts/{id}/services/logs`     | its journal, `?name=&lines=` (20–2000) |
+| `POST`   | `/api/hosts/{id}/services/action`   | start, stop, restart, reload, enable or disable |
+| `POST`   | `/api/hosts/{id}/services/reload`   | `daemon-reload` after a unit file changes |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
 | `DELETE` | `/api/hosts/{id}/files`             | delete `?path=`, `&recursive=true` for a full directory |
 | `GET`    | `/api/hosts/{id}/files/content`     | read a file, `?path=`                |
@@ -339,7 +372,7 @@ server/
   internal/sshx/     Deployer's keypair and SSH connections
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
-  internal/hostops/  managing a host: its files, its crontab, its power state
+  internal/hostops/  managing a host: files, services, crontab, power state
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate

@@ -967,13 +967,66 @@ button.block {
 }
 
 .chips .chip {
-  min-height: 36px;
+  min-height: 38px;
   padding: 6px 12px;
   background: var(--accent-soft);
   color: var(--accent);
   border: none;
   border-radius: 999px;
   font-size: 13px;
+}
+
+/* A chip that is also a filter: it says which way the list is cut, so the one
+   in force has to be readable across the room rather than merely different.
+   They wrap, which is what keeps four of them usable on a narrow phone where a
+   segmented control would squeeze each label to nothing. */
+.chips .chip.on {
+  background: var(--accent);
+  /* The surface colour rather than white: against the lighter accent the dark
+     theme uses, white 13px text is barely legible, and the page's own
+     background reads as ink in either theme. */
+  color: var(--surface);
+}
+
+.chips .chip .count {
+  margin-left: 6px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- stat tiles ---------- */
+
+/* Three facts, side by side, for the things a number answers better than a
+   sentence: how long, how much, which process. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stats > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: 12px;
+}
+
+.stats .k {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats .v {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sparkline {

@@ -74,6 +74,12 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
+/** Nobody calls it "photos.service" out loud, so a systemd unit is shown by
+ *  the part of its name that means something. */
+export function serviceName(unit: string): string {
+  return unit.replace(/\.service$/, '')
+}
+
 /** severity turns a usage percentage into a bar colour class. */
 export function severity(pct: number): '' | 'warn' | 'bad' {
   if (pct >= 90) return 'bad'

@@ -11,6 +11,11 @@ import type {
   ProvisionResult,
   Sample,
   SelfInfo,
+  ServiceAction,
+  ServiceActionResult,
+  ServiceList,
+  ServiceLog,
+  ServiceUnit,
   SSHKeyInfo,
 } from './types'
 
@@ -87,6 +92,26 @@ export const api = {
     request<Crontab>(`/api/hosts/${id}/cron?user=${encodeURIComponent(user)}`),
   saveCrontab: (id: number, user: string, content: string) =>
     request<Crontab>(`/api/hosts/${id}/cron`, { method: 'PUT', ...json({ user, content }) }),
+
+  /** The services someone installed on this host by hand. Every one of these
+   *  opens an SSH session, so they are asked for on demand, never polled. */
+  services: (id: number) => request<ServiceList>(`/api/hosts/${id}/services`),
+  service: (id: number, name: string) =>
+    request<ServiceUnit>(`/api/hosts/${id}/services/unit?name=${encodeURIComponent(name)}`),
+  serviceLog: (id: number, name: string, lines: number) =>
+    request<ServiceLog>(
+      `/api/hosts/${id}/services/logs?name=${encodeURIComponent(name)}&lines=${lines}`,
+    ),
+  /** Runs one systemctl verb. It returns once systemd has finished, which for
+   *  a service that takes its time starting is a while. */
+  serviceAction: (id: number, name: string, action: ServiceAction) =>
+    request<ServiceActionResult>(`/api/hosts/${id}/services/action`, {
+      method: 'POST',
+      ...json({ name, action }),
+    }),
+  /** daemon-reload: what turns an edited unit file into an edited service. */
+  reloadServices: (id: number) =>
+    request<{ status: string }>(`/api/hosts/${id}/services/reload`, { method: 'POST' }),
 
   /** An empty path lists the SSH user's home, which only the host knows. */
   files: (id: number, path = '') =>
