@@ -12,10 +12,10 @@ import (
 )
 
 // Managing a host — its files, its services, its crontab, restarting it — is
-// work Deployer asks the host to do. So the failures worth telling apart are "you asked for
-// something impossible" (400) and "the host refused" (502): a missing file or a
-// read-only filesystem is not a bug in this API, and saying so as a 500 would
-// send the user looking in the wrong place.
+// work Deployer asks the host to do. So the failures worth telling apart are
+// "you asked for something impossible" (400) and "the host refused" (502): a
+// missing file or a read-only filesystem is not a bug in this API, and saying
+// so as a 500 would send the user looking in the wrong place.
 
 // opTimeout bounds one operation on a host. Generous enough for a slow
 // handshake to a sleeping Pi, short enough that a hung host frees the request.
@@ -40,6 +40,9 @@ func (s *Server) writeOpError(w http.ResponseWriter, err error, action string) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, hostops.ErrNotEmpty):
 		// The caller can retry asking for the contents to go too.
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, hostops.ErrUnitRunning):
+		// Stopping it first is a step the caller can take, not a mistake.
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, hostops.ErrNeedsRoot):
 		writeError(w, http.StatusForbidden, err.Error())
@@ -200,6 +203,62 @@ func (s *Server) handleServiceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, log)
+}
+
+type createServiceInput struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// handleCreateService writes a new unit file and hands it to systemd. It is
+// created stopped: starting it and enabling it are separate calls, so a unit
+// that will not start comes back as a service that exists and did not start
+// rather than as an install that half happened.
+func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "create service")
+		return
+	}
+	var in createServiceInput
+	if err := decodeJSONLimit(r, &in, 4*hostops.MaxUnitBytes); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	unit, err := s.Ops.CreateUnit(ctx, h, in.Name, in.Content)
+	if err != nil {
+		s.writeOpError(w, err, "create service")
+		return
+	}
+	s.Log.Info("api: created service", "host", h.Name, "unit", unit.Name)
+	writeJSON(w, http.StatusCreated, unit)
+}
+
+// handleDeleteService removes a service that is not running. A running one
+// comes back as a 409: stopping it is the caller's next step, not an error in
+// what they asked for.
+func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "delete service")
+		return
+	}
+	name, ok := queryUnit(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	if err := s.Ops.RemoveUnit(ctx, h, name); err != nil {
+		s.writeOpError(w, err, "delete service")
+		return
+	}
+	s.Log.Info("api: deleted service", "host", h.Name, "unit", name)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type serviceActionInput struct {

@@ -63,6 +63,11 @@ func TestServiceRequestsValidateTheUnitName(t *testing.T) {
 		{"logs without a name", "GET", "/api/hosts/%d/services/logs", ""},
 		{"logs for a socket", "GET", "/api/hosts/%d/services/logs?name=x.socket", ""},
 		{"an action with no unit", "POST", "/api/hosts/%d/services/action", `{"name":"","action":"start"}`},
+		{"deleting with no name", "DELETE", "/api/hosts/%d/services", ""},
+		{"deleting a timer", "DELETE", "/api/hosts/%d/services?name=backup.timer", ""},
+		{"creating with no name", "POST", "/api/hosts/%d/services", `{"name":"","content":"[Unit]"}`},
+		{"creating a template", "POST", "/api/hosts/%d/services", `{"name":"t@.service","content":"[Unit]"}`},
+		{"creating an empty unit", "POST", "/api/hosts/%d/services", `{"name":"a.service","content":"  "}`},
 		{"an unknown field", "POST", "/api/hosts/%d/services/action", `{"name":"a.service","action":"start","force":true}`},
 	}
 	for _, tc := range cases {
@@ -117,6 +122,8 @@ func TestHostOperationsOnAMissingHost(t *testing.T) {
 		{"GET", "/api/hosts/999/cron", ""},
 		{"PUT", "/api/hosts/999/cron", `{"user":"","content":""}`},
 		{"GET", "/api/hosts/999/services", ""},
+		{"POST", "/api/hosts/999/services", `{"name":"photos.service","content":"[Unit]"}`},
+		{"DELETE", "/api/hosts/999/services?name=photos.service", ""},
 		{"GET", "/api/hosts/999/services/unit?name=photos.service", ""},
 		{"GET", "/api/hosts/999/services/logs?name=photos.service", ""},
 		{"POST", "/api/hosts/999/services/action", `{"name":"photos.service","action":"restart"}`},
@@ -157,5 +164,12 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 	body := `{"name":"photos.service","action":"restart"}`
 	if w := do(t, h, "POST", "/api/hosts/1/services/action", body); w.Code != http.StatusUnauthorized {
 		t.Errorf("restarting a service without a session = %d, want 401", w.Code)
+	}
+	create := `{"name":"photos.service","content":"[Unit]"}`
+	if w := do(t, h, "POST", "/api/hosts/1/services", create); w.Code != http.StatusUnauthorized {
+		t.Errorf("creating a service without a session = %d, want 401", w.Code)
+	}
+	if w := do(t, h, "DELETE", "/api/hosts/1/services?name=photos.service", ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("deleting a service without a session = %d, want 401", w.Code)
 	}
 }

@@ -190,6 +190,29 @@ toggle for whether it comes back after a reboot, and the tail of its journal at
 returning as soon as the command is sent, so a service that takes half a minute
 to come up takes half a minute to answer.
 
+**Add a service** writes one from six fields — what to run, as whom, from
+where, and what to do when it stops — rather than from a blank unit file, with
+the file it is about to write on screen the whole time for anyone who would
+rather type it. systemd is what validates it: the file is written, systemd is
+told to read it, and anything it refuses to load is taken straight back off the
+disk, because a unit file in /etc/systemd/system that systemd cannot read is
+worse than no file at all. It is created stopped, and starting and enabling it
+are separate steps, so a service that will not start says exactly that instead
+of looking like an install that half happened. A name systemd already knows is
+refused: a unit of the same name in /etc/systemd/system does not replace the
+distribution's, it shadows it, and doing that to sshd by accident from a phone
+is not a mistake worth leaving available.
+
+**Deleting** takes the unit file, the symlinks that start it at boot, and the
+drop-in overrides that are meaningless without it, then clears the failed state
+so a service that died on its way out does not haunt `systemctl --failed`.
+Whatever the service actually ran is left where it is. Two things it will not
+do: delete a service that is still running — stopping it is a decision the
+person deleting it makes, because deleting the unit of a running process leaves
+it up with nothing left to describe or stop it — and delete anything outside an
+administrator's own unit directories, since /usr/lib belongs to the package
+manager.
+
 The unit file is editable on the same screen, and saving runs
 `systemctl daemon-reload` straight afterwards — a unit file edited and not
 reloaded is a change that has not happened, which is the most common way an edit
@@ -308,8 +331,12 @@ The shell scripts behind host management are tested by running them: against a
 real filesystem, through a real shell, with the parsers the SSH path uses, both
 with GNU `find` and with it forced to fail so the busybox fallback is covered.
 `systemctl` and `journalctl` are stood in for by scripts that answer the way the
-real ones do, so the listing, the parsing and the fallback for a `journalctl`
-too old to know `--no-hostname` are all exercised without a running systemd.
+real ones do, so the listing, the parsing, the fallback for a `journalctl` too
+old to know `--no-hostname`, and what creating and deleting a service leave on
+disk are all exercised without a running systemd. The refusals get their own
+tests, because they are the point: writing over an existing unit file, taking a
+name systemd already knows, deleting a service that is still running, and
+deleting anything under /usr/lib all have to fail.
 
 The installer gets the same treatment in a sandbox: install, upgrade, the
 rollback a failed upgrade is supposed to trigger, uninstall, and the Go
@@ -344,6 +371,8 @@ Quoting is tested the same way — every path a person could type is handed to
 | `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
 | `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
 | `GET`    | `/api/hosts/{id}/services`          | hand-installed systemd services and their state |
+| `POST`   | `/api/hosts/{id}/services`          | write a new unit; systemd validates it |
+| `DELETE` | `/api/hosts/{id}/services`          | delete a stopped service, `?name=`   |
 | `GET`    | `/api/hosts/{id}/services/unit`     | one service, `?name=`                |
 | `GET`    | `/api/hosts/{id}/services/logs`     | its journal, `?name=&lines=` (20–2000) |
 | `POST`   | `/api/hosts/{id}/services/action`   | start, stop, restart, reload, enable or disable |
