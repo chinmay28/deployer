@@ -17,7 +17,7 @@
 #                       user running the installer), for updating itself
 #
 # Paths can be moved with DEPLOYER_INSTALL_DIR, DEPLOYER_DATA_DIR,
-# DEPLOYER_SERVICE_USER and DEPLOYER_UNIT.
+# DEPLOYER_SERVICE_USER, DEPLOYER_UNIT and DEPLOYER_GO_DIR.
 #
 set -euo pipefail
 
@@ -37,6 +37,9 @@ DATA_DIR="${DEPLOYER_DATA_DIR:-/var/lib/deployer}"
 BACKUP_DIR="$DATA_DIR/backups"
 DB_PATH="$DATA_DIR/deployer.db"
 UNIT="${DEPLOYER_UNIT:-/etc/systemd/system/deployer.service}"
+# Where the build-time Go toolchain is installed. Overridable so the installer's
+# own tests can exercise the upgrade without touching the machine's Go.
+GO_DIR="${DEPLOYER_GO_DIR:-/usr/local/go}"
 GO_VERSION=1.24.7
 NODE_MAJOR=22
 KEEP_BACKUPS=5
@@ -108,12 +111,55 @@ fi
 if [ "$need_go" = 1 ]; then
   log "Installing Go $GO_VERSION (build-time only)"
   tarball="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}"
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf "/tmp/${tarball}"
-  rm -f "/tmp/${tarball}"
+
+  # A download path of this run's own, removed on the way out. A fixed name in
+  # /tmp belongs to every copy of this installer at once, and two that overlap
+  # — a self-update started again while the first one is still going — had one
+  # deleting the tarball the other was about to unpack, which surfaced as tar
+  # failing to open a file curl had just reported writing.
+  gotar="$(mktemp "/tmp/${tarball}.XXXXXX")" || die "Could not write a temporary file to /tmp."
+  trap 'rm -f "$gotar"' EXIT
+
+  # go.dev/dl is a redirector to dl.google.com, so it is the half more likely
+  # to be blocked or rate-limited; where it is, the destination still answers.
+  got_go=0
+  for url in "https://go.dev/dl/${tarball}" "https://dl.google.com/go/${tarball}"; do
+    if curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$gotar"; then
+      got_go=1
+      break
+    fi
+    warn "Could not download $url"
+  done
+  if [ "$got_go" = 0 ]; then
+    die "Could not download Go $GO_VERSION for linux-$GO_ARCH. Check the host's network and try again."
+  fi
+
+  # curl can finish happy having written nothing worth having: a captive
+  # portal's login page, a body cut short, a disk with no room on it. What
+  # follows replaces a working toolchain, so the archive is proved first.
+  [ -s "$gotar" ] || die "The Go download came back empty. Is there space left on /tmp?"
+  gzip -t "$gotar" 2>/dev/null ||
+    die "The Go download is not a gzip archive — something other than go.dev answered for it."
+
+  # Unpacked beside the toolchain in use and swapped in only once it is known to
+  # contain a go binary. Deleting the old one first, as this used to, meant a
+  # download that failed for any reason left the machine with no Go at all —
+  # and every later run failing on a different line than the one that broke.
+  rm -rf "$GO_DIR.new" "$GO_DIR.old"
+  mkdir -p "$GO_DIR.new"
+  tar -C "$GO_DIR.new" --strip-components=1 -xzf "$gotar" ||
+    die "Could not unpack the Go archive."
+  [ -x "$GO_DIR.new/bin/go" ] || die "The Go archive unpacked without a go binary in it."
+  if [ -d "$GO_DIR" ]; then
+    mv "$GO_DIR" "$GO_DIR.old"
+  fi
+  mv "$GO_DIR.new" "$GO_DIR"
+  rm -rf "$GO_DIR.old"
+
+  rm -f "$gotar"
+  trap - EXIT
 fi
-export PATH="/usr/local/go/bin:$PATH"
+export PATH="$GO_DIR/bin:$PATH"
 command -v go >/dev/null || die "Go is still not on PATH."
 
 need_node=1

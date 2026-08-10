@@ -310,6 +310,15 @@ with GNU `find` and with it forced to fail so the busybox fallback is covered.
 `systemctl` and `journalctl` are stood in for by scripts that answer the way the
 real ones do, so the listing, the parsing and the fallback for a `journalctl`
 too old to know `--no-hostname` are all exercised without a running systemd.
+
+The installer gets the same treatment in a sandbox: install, upgrade, the
+rollback a failed upgrade is supposed to trigger, uninstall, and the Go
+toolchain it fetches to build with — a download that is refused, one that
+returns nothing at all, and one that works. The toolchain already on the
+machine has to survive the first two, because an installer that removes it
+before it has something to put in its place leaves the host unable to build
+anything and every later run failing on a different line than the one that
+broke.
 Quoting is tested the same way — every path a person could type is handed to
 `/bin/sh` and has to come back out the other side unchanged.
 
