@@ -107,6 +107,99 @@ run_installer() {
     bash "$REPO_ROOT/scripts/quickstart.sh" "$@"
 }
 
+# ------------------------------------------------------------ the Go toolchain
+
+# A download that fails has to leave the toolchain already on the machine alone.
+# The installer used to delete it first and unpack afterwards, so anything that
+# went wrong in between — a blocked mirror, a full disk, a second copy of the
+# installer removing the tarball from under this one — left the host with no Go
+# at all, and every run after that failing somewhere else entirely.
+info "A failed Go download leaves the existing toolchain in place"
+mkdir -p "$SANDBOX/failbin" "$SANDBOX/goroot/bin"
+printf '#!/usr/bin/env bash\necho "the toolchain that was already here"\n' > "$SANDBOX/goroot/bin/go"
+
+# Old enough that the installer wants to replace it.
+cat > "$SANDBOX/failbin/go" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-} ${2:-}" = "env GOVERSION" ]; then echo go1.11.0; exit 0; fi
+exit 0
+STUB
+chmod +x "$SANDBOX/goroot/bin/go" "$SANDBOX/failbin/go"
+
+# go_download_fails NAME EXPECTED-MESSAGE CURL-STUB
+go_download_fails() {
+  local name="$1" want="$2" stub="$3"
+  printf '%s' "$stub" > "$SANDBOX/failbin/curl"
+  chmod +x "$SANDBOX/failbin/curl"
+
+  if run_installer PATH="$SANDBOX/failbin:$PATH" DEPLOYER_GO_DIR="$SANDBOX/goroot" \
+       -- > "$SANDBOX/gofail.log" 2>&1; then
+    cat "$SANDBOX/gofail.log"
+    fail "$name: the installer should stop when Go cannot be installed"
+  fi
+  grep -q "$want" "$SANDBOX/gofail.log" || {
+    cat "$SANDBOX/gofail.log"
+    fail "$name: the failure should say '$want' rather than whatever ran after it"
+  }
+  [ -x "$SANDBOX/goroot/bin/go" ] || fail "$name: destroyed the toolchain that was working"
+  [ ! -e "$SANDBOX/goroot.new" ] || fail "$name: left the staging directory behind"
+  [ ! -e "$SANDBOX/goroot.old" ] || fail "$name: left the displaced toolchain behind"
+  pass "$name"
+}
+
+# A mirror that refuses outright.
+go_download_fails "a refused download stops the install" 'Could not download Go' '#!/usr/bin/env bash
+echo "curl: (22) The requested URL returned error: 403" >&2
+exit 22
+'
+
+# And the one that actually bit: curl answering as though it worked and leaving
+# nothing behind — which is what a second copy of the installer deleting the
+# tarball looks like from in here. The old code went straight on to unpack it.
+go_download_fails "a download that writes nothing stops the install" 'came back empty' '#!/usr/bin/env bash
+exit 0
+'
+
+# And the way it is supposed to go: a real archive, unpacked and swapped in.
+info "A good Go download replaces the toolchain"
+mkdir -p "$SANDBOX/faketoolchain/go/bin"
+printf '#!/usr/bin/env bash\necho the-new-toolchain\n' > "$SANDBOX/faketoolchain/go/bin/go"
+chmod +x "$SANDBOX/faketoolchain/go/bin/go"
+
+# Answers with a miniature toolchain shaped the way go.dev's archives are: a
+# single go/ directory at the root, which is what --strip-components counts on.
+cat > "$SANDBOX/failbin/curl" <<STUB
+#!/usr/bin/env bash
+out=""
+while [ \$# -gt 0 ]; do
+  if [ "\$1" = "-o" ]; then out="\$2"; shift; fi
+  shift
+done
+[ -n "\$out" ] || exit 1
+tar -C "$SANDBOX/faketoolchain" -czf "\$out" go
+STUB
+chmod +x "$SANDBOX/failbin/curl"
+
+# Pointed at a ref that does not exist, so the run stops at the clone just after
+# the Go step instead of going on to build with a toolchain that cannot compile.
+if run_installer PATH="$SANDBOX/failbin:$PATH" DEPLOYER_GO_DIR="$SANDBOX/goroot" \
+     DEPLOYER_REF=no-such-ref -- > "$SANDBOX/goswap.log" 2>&1; then
+  cat "$SANDBOX/goswap.log"
+  fail "the run should have stopped at the missing ref"
+fi
+"$SANDBOX/goroot/bin/go" 2>/dev/null | grep -q the-new-toolchain || {
+  cat "$SANDBOX/goswap.log"
+  fail "the downloaded toolchain was not swapped in"
+}
+[ ! -e "$SANDBOX/goroot.new" ] || fail "the staging directory was left behind"
+[ ! -e "$SANDBOX/goroot.old" ] || fail "the displaced toolchain was left behind"
+pass "a good download unpacks and replaces the toolchain"
+
+if ls /tmp/go*.tar.gz.?????? >/dev/null 2>&1; then
+  fail "a download was left behind in /tmp instead of being cleaned up"
+fi
+pass "no run leaves its download behind in /tmp"
+
 # --------------------------------------------------------------- fresh install
 
 info "Fresh install"
