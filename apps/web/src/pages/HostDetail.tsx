@@ -255,6 +255,23 @@ export default function HostDetail() {
             </div>
           </Link>
 
+          {/* Sits next to the Restart button on purpose: the question "why did
+              it restart?" is the one asked immediately after a machine does it
+              by itself, and this is where the answer is. */}
+          <Link className="card" to={`/hosts/${hostId}/boot`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Why it restarted</div>
+                <div className="sub">
+                  {sample
+                    ? `Up ${uptime(sample.uptimeS)} — what took it down last, and how sure Deployer is`
+                    : 'What took it down last, and how sure Deployer is'}
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
+
           <Card>
             <div className="title">Restart</div>
             <p className="sub" style={{ marginTop: 4 }}>

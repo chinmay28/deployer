@@ -82,6 +82,61 @@ func (s *Server) handleHostReboot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": reason})
 }
 
+// --- why it restarted ---
+
+// bootTimeout bounds the read of a host's boot record. It is longer than an
+// ordinary operation because reading the previous boot out of the journal means
+// systemd walking its archives, which on a Pi's SD card is not instant.
+const bootTimeout = 60 * time.Second
+
+// handleHostBoot answers "why did it restart?" with Deployer's best guess and
+// everything it looked at to make it. The guess is made on the host's evidence
+// in one place — hostops.diagnose — so what this returns is what the screen
+// shows, rather than a second opinion assembled here.
+func (s *Server) handleHostBoot(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "read boot record")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), bootTimeout)
+	defer cancel()
+
+	report, err := s.Ops.LastBoot(ctx, h)
+	if err != nil {
+		s.writeOpError(w, err, "read boot record")
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// handleKeepJournal makes the host's journal survive a restart. It is the
+// answer to the commonest reason the handler above has nothing to say: on
+// Debian, and so on Raspberry Pi OS, systemd keeps its log in memory unless
+// /var/log/journal exists, which means the log of the boot that crashed dies
+// with it.
+//
+// A host that already keeps its journal is not an error and says so.
+func (s *Server) handleKeepJournal(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "keep the journal")
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	storage, err := s.Ops.KeepJournal(ctx, h)
+	if err != nil {
+		s.writeOpError(w, err, "keep the journal")
+		return
+	}
+	if !storage.Already {
+		s.Log.Info("api: turned on persistent logging", "host", h.Name)
+	}
+	writeJSON(w, http.StatusOK, storage)
+}
+
 // --- crontab ---
 
 func (s *Server) handleGetCrontab(w http.ResponseWriter, r *http.Request) {

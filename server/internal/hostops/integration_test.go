@@ -116,6 +116,40 @@ func TestFilesOverSSH(t *testing.T) {
 	}
 }
 
+// The boot report is the largest thing this package sends and receives: a
+// multi-argument command carrying a shell script twice, and two base64 chunks of
+// log coming back. The scripts and the verdict are tested elsewhere; what this
+// proves is that the whole of it survives a real channel.
+func TestLastBootOverSSH(t *testing.T) {
+	svc, host := sshEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	report, err := svc.LastBoot(ctx, host)
+	if err != nil {
+		t.Fatalf("LastBoot: %v", err)
+	}
+	// What is true of any machine, whatever it remembers about restarting: it
+	// is up, it has been up for some time, and something ran the script.
+	if report.UptimeS <= 0 || report.BootedAt.IsZero() {
+		t.Errorf("uptime = %d, bootedAt = %v, want both read from /proc", report.UptimeS, report.BootedAt)
+	}
+	if report.AsUser == "" {
+		t.Error("asUser is empty, want the account the script ran as")
+	}
+	if report.Kernel == "" {
+		t.Error("kernel is empty, want what uname reported")
+	}
+	// A verdict is always reached, even where the verdict is that there is
+	// nothing to go on — an empty cause would mean diagnose never ran.
+	if report.Cause == "" || report.Confidence == "" || report.Headline == "" {
+		t.Errorf("verdict = %+v, want a cause, a confidence and a headline", report)
+	}
+	if report.Signs == nil || report.Restarts == nil || report.Reasons == nil {
+		t.Error("the evidence lists should be empty, never absent — the UI maps over them")
+	}
+}
+
 // An empty path means the SSH user's home, which only the host can answer.
 func TestListHomeOverSSH(t *testing.T) {
 	svc, host := sshEnv(t)

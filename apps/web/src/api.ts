@@ -1,5 +1,6 @@
 import type {
   App,
+  BootReport,
   Crontab,
   Deployment,
   DirListing,
@@ -7,6 +8,7 @@ import type {
   HostFile,
   HostTestResult,
   Installation,
+  JournalStorage,
   Overview,
   ProvisionResult,
   Sample,
@@ -86,6 +88,16 @@ export const api = {
    *  There is no shutdown: Deployer cannot turn a host back on. */
   reboot: (id: number) =>
     request<{ status: string }>(`/api/hosts/${id}/reboot`, { method: 'POST' }),
+
+  /** Why the machine restarted last: Deployer's best guess and the evidence
+   *  behind it. One SSH session that reads wtmp, the previous boot's log and
+   *  the Pi firmware's throttle flags, so it is asked for on demand and never
+   *  polled. */
+  boot: (id: number) => request<BootReport>(`/api/hosts/${id}/boot`),
+  /** Make the host's journal survive a restart, which is what turns "there is
+   *  no record of it" into an answer next time. Idempotent. */
+  keepJournal: (id: number) =>
+    request<JournalStorage>(`/api/hosts/${id}/boot/journal`, { method: 'POST' }),
 
   /** An empty user means the account Deployer signs in as. */
   crontab: (id: number, user = '') =>
