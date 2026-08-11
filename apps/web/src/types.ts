@@ -147,6 +147,10 @@ export interface ServiceUnit {
   result: string
   /** Why systemd could not read the unit file, where it could not. */
   loadError?: string
+  /** The units that pull this one in, most specific relation first — the
+   *  answer a 'static' unit file leaves out. Only the single-service call asks
+   *  systemd for it, so it is absent on a listing. */
+  startedBy?: string[]
 }
 
 export interface ServiceList {

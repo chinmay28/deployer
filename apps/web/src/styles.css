@@ -994,6 +994,42 @@ button.block {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- unit references ---------- */
+
+/* Other units, named rather than counted — the ones that pull a service in.
+   They wrap, because a name is long and a phone is narrow, and each keeps a
+   thumb-sized target of its own. */
+.unit-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.unit-refs > * {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A service among them has a screen of its own, so it is a link and is
+   coloured like one. A .socket or .target has nowhere to go and stays flat, in
+   the same pill, so the row still reads as one list of names. */
+.unit-refs a {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ---------- stat tiles ---------- */
 
 /* Three facts, side by side, for the things a number answers better than a

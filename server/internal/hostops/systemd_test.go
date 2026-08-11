@@ -289,6 +289,85 @@ func TestUnitsMarkTemplates(t *testing.T) {
 	}
 }
 
+// showUnit runs the real single-unit script and reads back what it said.
+func showUnit(t *testing.T, name string, path []string) Unit {
+	t.Helper()
+	out, code := runScript(t, asUser(showScript, name), "", path...)
+	if code != 0 {
+		t.Fatalf("showing %s exited %d", name, code)
+	}
+	list := parseUnitList(out)
+	if len(list.Units) != 1 {
+		t.Fatalf("showing %s described %d units, want one", name, len(list.Units))
+	}
+	return list.Units[0]
+}
+
+// "static" is systemd saying a unit has no [Install] section, which says
+// nothing about what does start it. The reverse dependencies are that answer,
+// and they arrive as several properties naming the same units over and over.
+func TestUnitNamesWhatStartsIt(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "photos.service",
+		"UnitFileState=static",
+		"TriggeredBy=photos.socket",
+		"RequiredBy=photos-sync.service",
+		"WantedBy=multi-user.target photos-sync.service",
+	)
+
+	unit := showUnit(t, "photos.service", path)
+	if got := strings.Join(unit.StartedBy, " "); got != "photos.socket photos-sync.service multi-user.target" {
+		t.Errorf("startedBy = %q, want the trigger first and each unit named once", got)
+	}
+}
+
+// Relations that do not start anything are not an answer to "what starts it":
+// PartOf only propagates stop and restart, Requisite refuses to start rather
+// than starting. A unit is not an answer about itself either.
+func TestUnitStartersLeaveOutWhatDoesNotStartIt(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "photos.service",
+		"UnitFileState=static",
+		"ConsistsOf=photos-stack.service",
+		"RequisiteOf=photos-check.service",
+		"WantedBy=photos.service photos.socket",
+	)
+
+	unit := showUnit(t, "photos.service", path)
+	if got := strings.Join(unit.StartedBy, " "); got != "photos.socket" {
+		t.Errorf("startedBy = %q, want only the unit that would actually start it", got)
+	}
+}
+
+// A unit nothing currently pulls in says so by saying nothing, and the screen
+// is what turns that into "not right now" rather than "never".
+func TestUnitWithNothingStartingIt(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "photos.service", "UnitFileState=static", "ActiveState=inactive")
+
+	if unit := showUnit(t, "photos.service", path); len(unit.StartedBy) != 0 {
+		t.Errorf("startedBy = %v, want nothing", unit.StartedBy)
+	}
+}
+
+// The listing does not ask for reverse dependencies: a row has no room for the
+// answer, and asking would grow every unit's output for a question one screen
+// asks. Whatever systemctl volunteers there is ignored rather than half-shown.
+func TestUnitsListDoesNotAskWhatStartsThem(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	etc := t.TempDir()
+	unitFile(t, etc, "photos.service")
+	props(t, state, "photos.service", "UnitFileState=static")
+
+	if strings.Contains(unitListScript, "WantedBy") {
+		t.Error("the listing script asks for reverse dependencies it does not show")
+	}
+	list := listUnits(t, MaxUnits, path, etc)
+	if len(list.Units) != 1 || len(list.Units[0].StartedBy) != 0 {
+		t.Errorf("units = %+v, want one unit with no starters read", list.Units)
+	}
+}
+
 // Descriptions are free text. A line that looks like one of the markers the
 // output is split on has to stay part of the description.
 func TestUnitDescriptionsAreNotMistakenForMarkers(t *testing.T) {

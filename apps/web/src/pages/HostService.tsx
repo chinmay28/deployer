@@ -237,15 +237,17 @@ export default function HostService() {
 
               <Card>
                 <div className="title">At boot</div>
-                <p className="sub" style={{ marginTop: 4 }}>
+                <p className="sub" style={{ marginTop: 4, marginBottom: 0 }}>
                   {unit.fileState === 'enabled'
                     ? `${short} starts by itself when the machine does.`
                     : unit.fileState === 'static'
-                      ? 'This unit is started by another one rather than on its own, so there is nothing to enable.'
+                      ? `${short} has no [Install] section, so there is nothing to enable: it runs when another unit pulls it in, or when you start it here.`
                       : `${short} only runs when something starts it. It will not come back after a reboot.`}
                 </p>
+                <StartedBy hostId={hostId} unit={unit} />
                 {unit.fileState !== 'static' && (
                   <button
+                    style={{ marginTop: 10 }}
                     className="secondary block"
                     onClick={() => ask(unit.fileState === 'enabled' ? 'disable' : 'enable')}
                     disabled={working}
@@ -369,6 +371,54 @@ export default function HostService() {
         </Sheet>
       )}
     </Page>
+  )
+}
+
+/**
+ * Which units pull this one in — the answer "started by another unit" raises
+ * and does not give.
+ *
+ * systemd only names units it has loaded, so an empty answer is "nothing is
+ * pulling it in right now" rather than "nothing ever will". That distinction
+ * matters on a static unit, where an empty answer otherwise reads as a
+ * contradiction of the badge above it, so it is spelled out there; on an
+ * ordinary enabled or disabled unit it is not a question anyone asked, and
+ * nothing is said at all.
+ */
+function StartedBy({ hostId, unit }: { hostId: number; unit: ServiceUnit }) {
+  const starters = unit.startedBy ?? []
+
+  if (starters.length === 0) {
+    if (unit.fileState !== 'static') return null
+    return (
+      <p className="sub" style={{ marginTop: 10, marginBottom: 0 }}>
+        systemd does not currently name anything that pulls it in. A unit that
+        only appears in something else's <span className="mono">Wants=</span> stays
+        invisible here until that something is loaded.
+      </p>
+    )
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="sub">
+        Started by {starters.length === 1 ? 'this unit' : `these ${starters.length} units`}:
+      </div>
+      <div className="unit-refs">
+        {starters.map((name) =>
+          // Only a service has a screen of its own. The socket, timer or target
+          // that started one is shown but goes nowhere, which is the truth: this
+          // app manages services and does not pretend to manage the rest.
+          name.endsWith('.service') ? (
+            <Link key={name} to={`/hosts/${hostId}/service?name=${encodeURIComponent(name)}`}>
+              {name}
+            </Link>
+          ) : (
+            <span key={name}>{name}</span>
+          ),
+        )}
+      </div>
+    </div>
   )
 }
 
