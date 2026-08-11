@@ -190,6 +190,17 @@ toggle for whether it comes back after a reboot, and the tail of its journal at
 returning as soon as the command is sent, so a service that takes half a minute
 to come up takes half a minute to answer.
 
+A unit with no `[Install]` section has nothing to enable — systemd calls it
+`static`, and it runs only when something else pulls it in. Rather than leave
+that as "started by another unit", the screen asks systemd which one and names
+it: the socket, timer or path unit that activates it, or whatever wants,
+requires, binds to or upholds it, most specific first. Services among them link
+to their own screen. `PartOf` and `Requisite` are left out, since the first only
+propagates stop and restart and the second refuses to start rather than
+starting. systemd only names units it has loaded, so nothing named means nothing
+is pulling it in right now — which the screen says in those words rather than
+claiming nothing ever will.
+
 **Add a service** writes one from six fields — what to run, as whom, from
 where, and what to do when it stops — rather than from a blank unit file, with
 the file it is about to write on screen the whole time for anyone who would

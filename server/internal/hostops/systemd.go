@@ -94,6 +94,11 @@ type Unit struct {
 	// LoadError is why systemd could not read the unit file, on the units
 	// where it could not. Empty otherwise.
 	LoadError string `json:"loadError,omitempty"`
+	// StartedBy names the units that pull this one in, most specific relation
+	// first. It is what "static" leaves unsaid: a unit with no [Install]
+	// section is started by somebody, and this is who. Empty on a listing,
+	// which does not ask for it.
+	StartedBy []string `json:"startedBy,omitempty"`
 }
 
 // UnitList is every hand-installed service on a host.
@@ -121,6 +126,27 @@ type UnitLog struct {
 const showProps = `-p Id -p Description -p LoadState -p ActiveState -p SubState ` +
 	`-p UnitFileState -p FragmentPath -p MainPID -p MemoryCurrent -p NRestarts ` +
 	`-p Result -p LoadError -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic`
+
+// startedByOrder is systemd's reverse dependencies, most specific relation
+// first, and the properties that carry them. Every one of these starts the unit
+// when it starts itself: Wants, Requires, BindsTo and Upholds all pull their
+// target up, and TriggeredBy is the socket, timer or path unit that activates
+// it on demand — the usual answer for a service with no [Install] section.
+//
+// PartOf and Requisite are deliberately absent. The first only propagates stop
+// and restart, the second refuses to start rather than starting anything, so
+// neither belongs under the word "started".
+//
+// systemd only names units it currently has loaded, so this answers "what is
+// pulling it in now" rather than "what could". A property an older systemd has
+// never heard of is left out of the output rather than being an error, which is
+// why UpheldBy can be asked for unconditionally.
+var startedByOrder = []string{"TriggeredBy", "BoundBy", "RequiredBy", "UpheldBy", "WantedBy"}
+
+// startedByProps asks for them. It is only added to the single-unit call: a
+// listing shows a badge per row and has no room for the answer, and asking
+// would grow every row's output for a question only one screen asks.
+const startedByProps = ` -p TriggeredBy -p BoundBy -p RequiredBy -p UpheldBy -p WantedBy`
 
 // unitDirs is where an administrator's own unit files live. /usr/lib and /lib
 // are the distribution's, and everything in them is somebody else's business.
@@ -190,7 +216,7 @@ command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on th
 printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
 printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
 printf '@@units\n'
-systemctl show --no-pager ` + showProps + ` -- "$u"
+systemctl show --no-pager ` + showProps + startedByProps + ` -- "$u"
 `
 
 // Unit describes one service. A name systemd has never heard of is not an
@@ -602,6 +628,7 @@ func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
 		MainPID:     atoi(props["MainPID"]),
 		Restarts:    atoi(props["NRestarts"]),
 		Memory:      memoryBytes(props["MemoryCurrent"]),
+		StartedBy:   startedBy(props),
 	}
 	// A running unit has been running since it went active; a stopped or
 	// failed one has been that way since it went inactive. Reading the wrong
@@ -613,6 +640,27 @@ func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
 	}
 	unit.SinceS = sinceSeconds(stamp, uptime)
 	return unit, true
+}
+
+// startedBy collects the units that pull this one in, in the order of
+// startedByOrder and without repeats: the same unit usually both wants and
+// requires another, and naming it twice reads as two answers to one question.
+// The unit itself is dropped where it appears — a socket and its service share
+// a name often enough that systemd naming one from the other is worth guarding
+// against, and "started by itself" is not an answer.
+func startedBy(props map[string]string) []string {
+	var names []string
+	seen := map[string]bool{strings.TrimSpace(props["Id"]): true}
+	for _, key := range startedByOrder {
+		for _, name := range strings.Fields(props[key]) {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // sinceSeconds turns systemd's microseconds-since-boot into an age. A zero

@@ -1,4 +1,5 @@
 import { Badge } from './ui'
+import { serviceName } from '../lib/format'
 import type { DeploymentStatus, HealthStatus, HostStatus, ServiceUnit } from '../types'
 
 export function HostBadge({ status }: { status: HostStatus }) {
@@ -94,7 +95,17 @@ export function BootBadge({ unit }: { unit: ServiceUnit }) {
     case 'disabled':
       return <Badge tone="neutral">Manual start</Badge>
     case 'static':
-      return <Badge tone="neutral">Started by another unit</Badge>
+      // "another unit" is the honest answer only until systemd is asked which
+      // one. Where there is a single one, the badge says its name; where
+      // several pull it in, no name is the whole truth and the card below
+      // lists them all.
+      return (
+        <Badge tone="neutral">
+          {unit.startedBy?.length === 1
+            ? `Started by ${serviceName(unit.startedBy[0])}`
+            : 'Started by another unit'}
+        </Badge>
+      )
     case 'masked':
       return <Badge tone="warn">Masked</Badge>
     default:
