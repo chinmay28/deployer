@@ -264,6 +264,53 @@ an escalation — Deployer already holds a key that can run anything on the
 machine — but a file browser that could not open `/etc` would be hiding the
 reality rather than limiting it.
 
+## Why it restarted
+
+A Raspberry Pi that reboots on its own is the one question a phone is worst at
+answering, because the answer is never in one place. **Why it restarted** reads
+all of them in a single SSH session and says what it thinks, with the evidence
+under it.
+
+There are four places to read. `wtmp` remembers when the machine came up and —
+the valuable part — whether anything recorded a shutdown before it, which is the
+one signal that survives on a host that keeps no logs at all. The end of the
+previous boot's journal, at any priority, is where an orderly shutdown shows
+itself. That same boot's warnings and worse are where a kernel panic, an
+out-of-memory kill, a critical temperature, a soft lockup, an SD card giving up
+and the Pi's under-voltage warning all are; filtering by priority is what makes
+reading hours of log affordable on a Pi. And `vcgencmd get_throttled` is the
+only place a Raspberry Pi records its supply having sagged.
+
+The verdict is a guess and is labelled as one. It tells a restart something asked
+for from a panic, a lock-up, an out-of-memory kill, a thermal shutdown, an
+under-voltage, a storage failure and a plain power cut — and, often, from "it
+went down without saying why", which is an honest answer and a common one.
+Confidence reads **the machine said so** only where the machine said so in as
+many words; everything inferred is at best the best explanation available. Each
+sign keeps the log line it was found in, because a verdict nobody can check is
+not worth much on a screen this size.
+
+**When a line was logged matters as much as what it says.** A machine that ran
+out of memory at nine and restarted at three did not restart because it ran out
+of memory. Every sign carries how many seconds before the restart it was
+written, and only the ones inside two minutes of it are allowed to be the cause.
+The rest are still shown — as the weather rather than the event.
+
+The most useful finding is often an absence. A machine that was asked to restart
+says so at length; a machine that lost power says nothing at all and its log
+stops mid-sentence, which cannot be told apart from a lock-up so complete the
+kernel never got to write about it. Deployer says that instead of picking the
+more dramatic of the two. It also counts: one unexplained restart is bad luck,
+and four in a week is the reason someone opened the screen.
+
+**A journal kept in memory is the commonest reason there is no answer at all.**
+Debian, and so Raspberry Pi OS, leaves systemd's log in memory unless
+`/var/log/journal` exists — so the log of the boot that crashed dies with the
+boot that crashed. Where that is the case the screen says so in those words and
+offers to fix it, since creating that directory is the whole of the fix. Failing
+that, the lines immediately before the last kernel banner in `/var/log/syslog`
+are exactly the end of the previous boot, and are read instead.
+
 ## Monitoring
 
 No agent is installed on the host. Deployer opens an SSH session and reads
@@ -355,7 +402,16 @@ with GNU `find` and with it forced to fail so the busybox fallback is covered.
 `systemctl` and `journalctl` are stood in for by scripts that answer the way the
 real ones do, so the listing, the parsing, the fallback for a `journalctl` too
 old to know `--no-hostname`, and what creating and deleting a service leave on
-disk are all exercised without a running systemd. The refusals get their own
+disk are all exercised without a running systemd.
+
+The restart diagnosis gets the same treatment, with `PATH` replaced rather than
+extended: half of what it has to get right is what it does when a command is
+*not* there, and a stub cannot express absence. So the journal that answers, the
+journal that has nothing from before the restart, the `last` too old to print
+ISO timestamps, the rsyslog file read in its place and the host with none of
+them are each a real run of the real script. The verdict itself is tested
+against fixtures of every cause, including the two that matter most: a sign far
+enough from the restart that it cannot be the cause, and a log that simply stops. The refusals get their own
 tests, because they are the point: writing over an existing unit file, taking a
 name systemd already knows, deleting a service that is still running, and
 deleting anything under /usr/lib all have to fail.
@@ -390,6 +446,8 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/provision`         | one-time password setup, not stored  |
 | `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440      |
 | `POST`   | `/api/hosts/{id}/reboot`            | restart the machine (there is no shutdown) |
+| `GET`    | `/api/hosts/{id}/boot`              | why it last restarted, and the evidence |
+| `POST`   | `/api/hosts/{id}/boot/journal`      | keep the journal across restarts, so the next one is explainable |
 | `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
 | `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
 | `GET`    | `/api/hosts/{id}/services`          | hand-installed services and timers, and their state |
@@ -432,7 +490,8 @@ server/
   internal/sshx/     Deployer's keypair and SSH connections
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
-  internal/hostops/  managing a host: files, services, crontab, power state
+  internal/hostops/  managing a host: files, services, crontab, power state,
+                     and guessing why it last restarted
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate

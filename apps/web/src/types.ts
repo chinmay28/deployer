@@ -188,6 +188,139 @@ export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' |
  *  afterwards failed, with just what was done. */
 export type ServiceActionResult = ServiceUnit | { name: string; action: string }
 
+/** What Deployer thinks took a host down the last time it restarted. */
+export type BootCause =
+  | 'clean'
+  | 'panic'
+  | 'lockup'
+  | 'oom'
+  | 'overheat'
+  | 'undervoltage'
+  | 'power'
+  | 'storage'
+  | 'unknown'
+
+/** How much the verdict is worth. 'certain' is only ever used where the machine
+ *  said so in as many words; everything inferred is at best 'likely'. */
+export type BootConfidence = 'certain' | 'likely' | 'unclear'
+
+/** Where the evidence came from: systemd's journal, an rsyslog file where the
+ *  journal keeps nothing across restarts, or nowhere at all. */
+export type BootSource = 'journal' | 'logfile' | 'none'
+
+/** One thing found in the record that bears on why the machine went down. */
+export interface BootSign {
+  kind: string
+  label: string
+  /** The log line it was found in, so the verdict can be checked. */
+  line: string
+  /** The part worth pulling out: the panic's reason, the process the
+   *  out-of-memory killer picked. */
+  detail?: string
+  /** How many seconds before the machine came back this was logged. */
+  beforeS?: number
+  /** Close enough to the restart to be part of it, rather than something that
+   *  also happened during that boot. */
+  near: boolean
+  count: number
+}
+
+/** One time the machine came up, as wtmp remembers it. */
+export interface Restart {
+  bootedAt: string
+  /** How long that boot lasted, or how long the current one has been running. */
+  upS?: number
+  /** True where a shutdown was recorded before it — something asked. Only
+   *  meaningful when the report's cleanKnown is set. */
+  clean: boolean
+  kernel?: string
+  current?: boolean
+  /** False where the record was found but its time was not, which is what an
+   *  old `last` with no ISO stamps leaves behind. */
+  timed: boolean
+}
+
+/** The Raspberry Pi firmware's own account of its power and heat. The "since
+ *  boot" flags describe the boot that is running now, not the one that ended,
+ *  which makes them corroboration rather than proof. */
+export interface Throttle {
+  raw: string
+  underVoltageNow: boolean
+  cappedNow: boolean
+  throttledNow: boolean
+  softTempNow: boolean
+  underVoltage: boolean
+  capped: boolean
+  throttled: boolean
+  softTemp: boolean
+}
+
+/** What the hardware watchdog says about the reset that started this boot. Not
+ *  every driver fills it in, so it is shown and never relied on. */
+export interface Watchdog {
+  bootStatus: number
+  flags?: string[]
+}
+
+/** Deployer's answer to "why did it restart?", with everything it looked at. */
+export interface BootReport {
+  cause: BootCause
+  confidence: BootConfidence
+  headline: string
+  detail: string
+  /** The steps to the verdict, in the order they mattered. */
+  reasons: string[]
+
+  bootedAt: string
+  uptimeS: number
+  /** How long the boot before this one lasted. */
+  previousUpS?: number
+
+  model?: string
+  kernel?: string
+  /** What it was running before, where that is known and different — a restart
+   *  that changed the kernel was an update. */
+  previousKernel?: string
+
+  signs: BootSign[]
+  restarts: Restart[]
+  /** How many of those restarts nothing asked for. */
+  unclean: number
+  /** Whether the history can tell a restart that was asked for from one that
+   *  was not. busybox's `last` cannot. */
+  cleanKnown: boolean
+
+  source: BootSource
+  /** Whether the host has journalctl at all. */
+  journal: boolean
+  /** Whether its journal survives a restart. False is the reason this screen
+   *  usually has nothing to show. */
+  persistent: boolean
+  /** The rsyslog file the evidence came out of, where the journal had none. */
+  logFile?: string
+  bootsKept?: number
+
+  /** The last thing the machine said before it went. */
+  logTail: string
+  truncated: boolean
+
+  throttle?: Throttle
+  watchdog?: Watchdog
+  tempC?: number
+  asUser: string
+}
+
+/** The state of persistent logging on a host, and what came of turning it on. */
+export interface JournalStorage {
+  enabled: boolean
+  /** True where it was already on and Deployer changed nothing. */
+  already: boolean
+  /** What journald.conf says about Storage=, where it says anything. */
+  configured?: string
+  /** Why the journal still will not survive a restart, where it will not. */
+  blocked?: string
+}
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

@@ -120,6 +120,8 @@ func TestHostOperationsOnAMissingHost(t *testing.T) {
 	_, h := testServer(t, "")
 	cases := []struct{ method, path, body string }{
 		{"POST", "/api/hosts/999/reboot", ""},
+		{"GET", "/api/hosts/999/boot", ""},
+		{"POST", "/api/hosts/999/boot/journal", ""},
 		{"GET", "/api/hosts/999/cron", ""},
 		{"PUT", "/api/hosts/999/cron", `{"user":"","content":""}`},
 		{"GET", "/api/hosts/999/services", ""},
@@ -154,6 +156,7 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 		"/api/hosts/1/services",
 		"/api/hosts/1/services/unit?name=photos.service",
 		"/api/hosts/1/services/logs?name=photos.service",
+		"/api/hosts/1/boot",
 	} {
 		if w := do(t, h, "GET", path, ""); w.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s without a session = %d, want 401", path, w.Code)
@@ -161,6 +164,9 @@ func TestHostOperationsNeedTheSession(t *testing.T) {
 	}
 	if w := do(t, h, "POST", "/api/hosts/1/reboot", ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("reboot without a session = %d, want 401", w.Code)
+	}
+	if w := do(t, h, "POST", "/api/hosts/1/boot/journal", ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("turning on persistent logging without a session = %d, want 401", w.Code)
 	}
 	body := `{"name":"photos.service","action":"restart"}`
 	if w := do(t, h, "POST", "/api/hosts/1/services/action", body); w.Code != http.StatusUnauthorized {

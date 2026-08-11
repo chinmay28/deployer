@@ -1,6 +1,13 @@
 import { Badge } from './ui'
 import { serviceName } from '../lib/format'
-import type { DeploymentStatus, HealthStatus, HostStatus, ServiceUnit } from '../types'
+import type {
+  BootCause,
+  BootConfidence,
+  DeploymentStatus,
+  HealthStatus,
+  HostStatus,
+  ServiceUnit,
+} from '../types'
 
 export function HostBadge({ status }: { status: HostStatus }) {
   switch (status) {
@@ -118,6 +125,42 @@ export function BootBadge({ unit }: { unit: ServiceUnit }) {
       return <Badge tone="warn">Masked</Badge>
     default:
       return null
+  }
+}
+
+/** What took the machine down last, in two words. A restart something asked for
+ *  is good news and reads as such; an unexplained one is deliberately neutral
+ *  rather than alarming, because "Deployer could not tell" is not a fault
+ *  found. */
+const CAUSE_WORD: Record<BootCause, { word: string; tone: 'good' | 'warn' | 'bad' | 'neutral' }> = {
+  clean: { word: 'Asked for', tone: 'good' },
+  panic: { word: 'Kernel panic', tone: 'bad' },
+  lockup: { word: 'Locked up', tone: 'bad' },
+  oom: { word: 'Out of memory', tone: 'warn' },
+  overheat: { word: 'Overheated', tone: 'bad' },
+  undervoltage: { word: 'Under-voltage', tone: 'warn' },
+  power: { word: 'Lost power', tone: 'warn' },
+  storage: { word: 'Storage', tone: 'bad' },
+  unknown: { word: 'Unexplained', tone: 'neutral' },
+}
+
+export function CauseBadge({ cause }: { cause: BootCause }) {
+  const { word, tone } = CAUSE_WORD[cause] ?? CAUSE_WORD.unknown
+  return <Badge tone={tone}>{word}</Badge>
+}
+
+/** How far the verdict above should be trusted. It is a separate badge because
+ *  the two are separate claims: "it panicked" and "Deployer is sure of it" can
+ *  come apart, and a screen that ran them together would be overstating a
+ *  guess. */
+export function ConfidenceBadge({ confidence }: { confidence: BootConfidence }) {
+  switch (confidence) {
+    case 'certain':
+      return <Badge tone="neutral">The machine said so</Badge>
+    case 'likely':
+      return <Badge tone="neutral">Best explanation</Badge>
+    default:
+      return <Badge tone="neutral">Not enough to say</Badge>
   }
 }
 
