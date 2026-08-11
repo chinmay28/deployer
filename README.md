@@ -176,12 +176,23 @@ Two things are deliberately not editable. A file over 512 KB comes back
 truncated, and saving the part you can see would throw the rest away; a binary
 file is shown as binary rather than run through a textarea that would mangle it.
 
-**Services** is every systemd service someone installed on the machine by
-hand — the unit files under `/etc/systemd/system` and
+**Services** is every systemd service and timer someone installed on the
+machine by hand — the unit files under `/etc/systemd/system` and
 `/usr/local/lib/systemd/system`. The distribution's own hundreds, in
 `/usr/lib/systemd/system`, are not what you pick up a phone to fix, so they are
 left out; where a unit file lives is the same rule systemd itself uses to decide
 who wins. Filter chips cut the list four ways and put failures first.
+
+Timers are listed beside the services because a scheduled job is written as a
+pair — a `.service` with no `[Install]` section and a `.timer` that starts it —
+and the timer is the half that carries the schedule and the half that gets
+enabled. Listing only services showed such a job as a unit nothing appeared to
+start, and a timer-only install, where the thing being scheduled is the
+distribution's, showed nothing at all. A timer's row says when it next fires
+rather than how long it has been waiting, and its screen says what it starts
+instead of a memory figure and a PID it does not have. Sockets, paths and
+targets are still left alone: naming them is one thing, and Deployer names the
+ones that matter, but managing them from a phone is another.
 
 Tapping one opens what it is doing — running, failed and why, for how long, its
 memory and its PID — with **Start**, **Stop**, **Restart** and **Reload**, a
@@ -201,7 +212,7 @@ starting. systemd only names units it has loaded, so nothing named means nothing
 is pulling it in right now — which the screen says in those words rather than
 claiming nothing ever will.
 
-**Add a service** writes one from six fields — what to run, as whom, from
+**Add a service** writes a service from six fields — what to run, as whom, from
 where, and what to do when it stops — rather than from a blank unit file, with
 the file it is about to write on screen the whole time for anyone who would
 rather type it. systemd is what validates it: the file is written, systemd is
@@ -381,10 +392,10 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/reboot`            | restart the machine (there is no shutdown) |
 | `GET`    | `/api/hosts/{id}/cron`              | a crontab, `?user=` (default: the SSH user) |
 | `PUT`    | `/api/hosts/{id}/cron`              | install a crontab; cron validates it |
-| `GET`    | `/api/hosts/{id}/services`          | hand-installed systemd services and their state |
+| `GET`    | `/api/hosts/{id}/services`          | hand-installed services and timers, and their state |
 | `POST`   | `/api/hosts/{id}/services`          | write a new unit; systemd validates it |
 | `DELETE` | `/api/hosts/{id}/services`          | delete a stopped service, `?name=`   |
-| `GET`    | `/api/hosts/{id}/services/unit`     | one service, `?name=`                |
+| `GET`    | `/api/hosts/{id}/services/unit`     | one service or timer, `?name=`       |
 | `GET`    | `/api/hosts/{id}/services/logs`     | its journal, `?name=&lines=` (20–2000) |
 | `POST`   | `/api/hosts/{id}/services/action`   | start, stop, restart, reload, enable or disable |
 | `POST`   | `/api/hosts/{id}/services/reload`   | `daemon-reload` after a unit file changes |

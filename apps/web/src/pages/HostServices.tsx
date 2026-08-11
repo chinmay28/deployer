@@ -22,12 +22,17 @@ type Filter = (typeof FILTERS)[number]['key']
 const SEARCH_FROM = 8
 
 /**
- * Every service someone installed on this host by hand.
+ * Every service and timer someone installed on this host by hand.
  *
  * A machine runs hundreds of units and cares about a handful, so the list is
  * the unit files under /etc/systemd/system and /usr/local/lib/systemd/system —
  * the ones a person wrote — rather than everything systemd knows about. The
  * distribution's own services are not what you reach for a phone to fix.
+ *
+ * Timers are here because a scheduled job is written as a pair, and the timer
+ * is the half that says when. Listing only services showed the other half of
+ * such a job and, where the thing being scheduled was the distribution's,
+ * nothing at all.
  *
  * Nothing here polls. Each of these screens is an SSH session to the host, so
  * they refresh when you ask them to and not on a timer.
@@ -105,9 +110,7 @@ export default function HostServices() {
           <Card>
             <div className="row between">
               <div className="grow">
-                <div className="title">
-                  {counts.all} service{counts.all === 1 ? '' : 's'}
-                </div>
+                <div className="title">{tally(units)}</div>
                 <div className="sub">
                   {counts.failed > 0
                     ? `${counts.failed} of them failed`
@@ -143,8 +146,8 @@ export default function HostServices() {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Find a service"
-              aria-label="Find a service"
+              placeholder="Find a unit"
+              aria-label="Find a unit"
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -168,10 +171,10 @@ export default function HostServices() {
 
           {counts.all === 0 ? (
             <Empty
-              message={`Nothing hand-installed on ${host?.name ?? 'this host'}. Unit files in /etc/systemd/system show up here — the distribution's own services don't.`}
+              message={`Nothing hand-installed on ${host?.name ?? 'this host'}. Services and timers in /etc/systemd/system show up here — the distribution's own don't.`}
             />
           ) : shown.length === 0 ? (
-            <Empty message="No service matches that." />
+            <Empty message="Nothing matches that." />
           ) : (
             shown.map((unit) => (
               <Link
@@ -224,6 +227,18 @@ function inFilter(unit: ServiceUnit, filter: Filter): boolean {
   }
 }
 
+/** The header counts the two kinds separately where there are both. A machine
+ *  with four services and four timers has four jobs on a schedule, and rolling
+ *  them into "8 services" says neither number. */
+function tally(units: ServiceUnit[]): string {
+  const timers = units.filter((unit) => unit.timer).length
+  const services = units.length - timers
+  const parts: string[] = []
+  if (services > 0 || timers === 0) parts.push(`${services} service${services === 1 ? '' : 's'}`)
+  if (timers > 0) parts.push(`${timers} timer${timers === 1 ? '' : 's'}`)
+  return parts.join(' · ')
+}
+
 /** The subtitle answers "and what about it?" — what it is, and how long it has
  *  been the way it is. A unit with no description at least has a name. */
 function summarize(unit: ServiceUnit): string {
@@ -232,6 +247,18 @@ function summarize(unit: ServiceUnit): string {
   if (unit.template) parts.push('template')
   else if (unit.load === 'not-found') parts.push('no unit file')
   else if (unit.load === 'masked') parts.push('masked')
+  // How long a timer has been waiting is not what anyone came to find out.
+  // When it next goes off is.
+  else if (unit.timer) parts.push(schedule(unit))
   else if (unit.sinceS > 0) parts.push(`${unit.active === 'active' ? 'up' : 'since'} ${uptime(unit.sinceS)}`)
   return parts.join(' · ') || unit.name
+}
+
+/** When a timer next fires. A stopped one has no next run at all, which is a
+ *  different thing from one that is due. */
+function schedule(unit: ServiceUnit): string {
+  if (unit.active !== 'active') return 'not scheduled'
+  if (!unit.nextS) return 'due now'
+  if (unit.nextS < 60) return 'due in under a minute'
+  return `next in ${uptime(unit.nextS)}`
 }

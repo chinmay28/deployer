@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
@@ -131,16 +132,19 @@ func names(list *UnitList) []string {
 	return found
 }
 
-// The whole point of the screen is the services someone put on the machine, so
-// the listing takes unit files and nothing else: not the .wants symlink farm
-// systemctl enable builds, not drop-in directories, not the timer beside the
-// service, and not a distribution directory it was never pointed at.
-func TestUnitsListsOnlyServiceFilesInTheDirectoriesGiven(t *testing.T) {
+// The whole point of the screen is what someone put on the machine, so the
+// listing takes their unit files and nothing else: not the .wants symlink farm
+// systemctl enable builds, not drop-in directories, not files that are not
+// units at all, and not a distribution directory it was never pointed at. The
+// timer beside a service is one of theirs and is listed — it is the half that
+// carries the schedule.
+func TestUnitsListsTheirServiceAndTimerFilesInTheDirectoriesGiven(t *testing.T) {
 	state, path := withFakeSystemctl(t)
 	etc, local, vendor := t.TempDir(), t.TempDir(), t.TempDir()
 
 	unitFile(t, etc, "photos.service")
 	unitFile(t, etc, "backup.timer")
+	unitFile(t, etc, "photos.socket")
 	unitFile(t, etc, "notes.txt")
 	unitFile(t, local, "cache.service")
 	unitFile(t, vendor, "ssh.service")
@@ -153,8 +157,8 @@ func TestUnitsListsOnlyServiceFilesInTheDirectoriesGiven(t *testing.T) {
 	props(t, state, "photos.service", "ActiveState=active", "SubState=running")
 
 	list := listUnits(t, MaxUnits, path, etc, local, filepath.Join(etc, "nowhere"))
-	if got := strings.Join(names(list), " "); got != "cache.service photos.service" {
-		t.Errorf("listed %q, want the two service files in alphabetical order", got)
+	if got := strings.Join(names(list), " "); got != "backup.timer cache.service photos.service" {
+		t.Errorf("listed %q, want the two services and the timer in alphabetical order", got)
 	}
 	if list.Truncated {
 		t.Error("truncated = true on a listing that fitted")
@@ -368,6 +372,102 @@ func TestUnitsListDoesNotAskWhatStartsThem(t *testing.T) {
 	}
 }
 
+// A timer's schedule is the reason to look at one, and systemd states it in
+// whichever clock the timer was written against: OnCalendar answers in seconds
+// since the epoch, OnBootSec in microseconds since boot. Both have to come out
+// as "in about this long", against the host's own clock rather than Deployer's.
+func TestTimersReadTheirScheduleFromEitherClock(t *testing.T) {
+	now, uptime := hostClock{now: 1_700_000_000, uptime: 3600}, 3600
+
+	calendar := map[string]string{
+		"Id":                     "backup.timer",
+		"NextElapseUSecRealtime": strconv.FormatInt((now.now+7200)*1e6, 10),
+		// The clock this timer does not use comes back as an unsigned -1.
+		"NextElapseUSecMonotonic": "18446744073709551615",
+		"LastTriggerUSec":         strconv.FormatInt((now.now-1800)*1e6, 10),
+		"Unit":                    "backup.service",
+	}
+	boot := map[string]string{
+		"Id":                      "warmup.timer",
+		"NextElapseUSecRealtime":  "0",
+		"NextElapseUSecMonotonic": strconv.FormatInt(int64(uptime+900)*1e6, 10),
+		"Unit":                    "warmup.service",
+	}
+
+	unit, _ := unitFromProps(calendar, now)
+	if !unit.Timer || unit.Triggers != "backup.service" {
+		t.Errorf("unit = %+v, want a timer that starts backup.service", unit)
+	}
+	if unit.NextS != 7200 || unit.LastS != 1800 {
+		t.Errorf("next = %ds, last = %ds, want 7200 and 1800", unit.NextS, unit.LastS)
+	}
+
+	unit, _ = unitFromProps(boot, now)
+	if unit.NextS != 900 {
+		t.Errorf("next = %ds, want 900 read from the monotonic clock", unit.NextS)
+	}
+	if unit.LastS != 0 {
+		t.Errorf("last = %ds, want 0 on a timer that has never fired", unit.LastS)
+	}
+
+	// A stopped timer has no next run at all, which is nothing rather than now.
+	unit, _ = unitFromProps(map[string]string{"Id": "backup.timer"}, now)
+	if unit.NextS != 0 || unit.LastS != 0 || unit.Triggers != "" {
+		t.Errorf("unit = %+v, want a timer systemd said nothing about", unit)
+	}
+
+	// Whatever a service happens to carry in those properties is not a schedule.
+	unit, _ = unitFromProps(map[string]string{"Id": "photos.service", "Unit": "photos.socket"}, now)
+	if unit.Timer || unit.Triggers != "" {
+		t.Errorf("unit = %+v, want a service with no schedule read off it", unit)
+	}
+}
+
+// The listing goes through the real script, so this is what proves the host's
+// clock reaches the parse at all — a timer's countdown is measured against it.
+func TestTimersInAListingCountDownFromTheHostsClock(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	etc := t.TempDir()
+	unitFile(t, etc, "backup.timer")
+	props(t, state, "backup.timer",
+		"ActiveState=active",
+		"SubState=waiting",
+		"UnitFileState=enabled",
+		"Unit=backup.service",
+		// Half an hour out, on a clock only the host knows.
+		"NextElapseUSecRealtime="+strconv.FormatInt((time.Now().Unix()+1800)*1e6, 10),
+	)
+
+	list := listUnits(t, MaxUnits, path, etc)
+	if len(list.Units) != 1 {
+		t.Fatalf("listed %v, want the timer", names(list))
+	}
+	timer := list.Units[0]
+	if !timer.Timer || timer.Triggers != "backup.service" {
+		t.Errorf("timer = %+v, want a timer that starts backup.service", timer)
+	}
+	// The script and the test read the clock a moment apart, so this is about
+	// the countdown being read at all rather than about the exact second.
+	if timer.NextS < 1700 || timer.NextS > 1800 {
+		t.Errorf("next = %ds, want about 1800", timer.NextS)
+	}
+}
+
+// Templates are patterns whatever their suffix, and a timer is as capable of
+// being one as a service.
+func TestTimerTemplatesAreTemplates(t *testing.T) {
+	for name, want := range map[string]bool{
+		"tunnel@.timer":     true,
+		"tunnel@.service":   true,
+		"tunnel@home.timer": false,
+		"backup.timer":      false,
+	} {
+		if got := isTemplate(name); got != want {
+			t.Errorf("isTemplate(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 // Descriptions are free text. A line that looks like one of the markers the
 // output is split on has to stay part of the description.
 func TestUnitDescriptionsAreNotMistakenForMarkers(t *testing.T) {
@@ -547,9 +647,14 @@ func TestCleanUnit(t *testing.T) {
 		{in: "tunnel@.service", want: "tunnel@.service"},
 		{in: "tunnel@home.service", want: "tunnel@home.service"},
 		{in: "my-app_2.service", want: "my-app_2.service"},
+		// A timer is named with its own suffix, always: the suffix is the
+		// difference between the two halves of a scheduled job.
+		{in: "backup.timer", want: "backup.timer"},
+		{in: "tunnel@.timer", want: "tunnel@.timer"},
 		{in: "", wantErr: true},
-		{in: "photos.timer", wantErr: true},
 		{in: "photos.socket", wantErr: true},
+		{in: "photos.mount", wantErr: true},
+		{in: "multi-user.target", wantErr: true},
 		{in: "photos.service; rm -rf /", wantErr: true},
 		{in: "photos service.service", wantErr: true},
 		{in: "-photos.service", wantErr: true},
@@ -652,7 +757,7 @@ func TestParseShowBlocksSplitOnId(t *testing.T) {
 		"Id=b.service", "ActiveState=failed",
 		"", "Id=c.service", "ActiveState=inactive",
 	}
-	units := parseShowBlocks(lines, 0)
+	units := parseShowBlocks(lines, hostClock{})
 	if len(units) != 3 {
 		t.Fatalf("parsed %d units, want 3: %+v", len(units), units)
 	}

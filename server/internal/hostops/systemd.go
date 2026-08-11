@@ -23,6 +23,13 @@ import (
 // "user created" means here, and it is decided by where the unit file lives,
 // which is the same rule systemd itself uses to decide who wins.
 //
+// Timers count as much as services. A job that runs on a schedule is written as
+// a pair — a .service with no [Install] section and a .timer that starts it —
+// and the timer is the half that carries the schedule and the half that gets
+// enabled. Listing only the services showed such a job as a unit nothing
+// appeared to start, and a timer-only install, where the service being
+// scheduled is the distribution's, showed nothing at all.
+//
 // systemctl show is the source of the state: one call describes every unit in
 // key=value lines, which parse the same on every version worth supporting, and
 // unlike `status` it never wraps, colours or truncates what it says.
@@ -42,10 +49,10 @@ const (
 	DefaultLogLines = 200
 )
 
-// unitPattern is what systemd allows in a unit name, narrowed to services. The
-// name reaches a command line as a quoted argument either way; this is what
-// keeps a typo from becoming a confusing error from the host.
-var unitPattern = regexp.MustCompile(`^[A-Za-z0-9_:@][A-Za-z0-9_.:@\\-]{0,238}\.service$`)
+// unitPattern is what systemd allows in a unit name, narrowed to the two types
+// Deployer manages. The name reaches a command line as a quoted argument either
+// way; this is what keeps a typo from becoming a confusing error from the host.
+var unitPattern = regexp.MustCompile(`^[A-Za-z0-9_:@][A-Za-z0-9_.:@\\-]{0,238}\.(service|timer)$`)
 
 // unitActions is every action Deployer will ask systemd for. Anything else —
 // masking, editing state files, isolating targets — belongs on a terminal, not
@@ -79,7 +86,19 @@ type Unit struct {
 	// Template marks a foo@.service, which is a pattern for instances rather
 	// than something that can be started on its own.
 	Template bool `json:"template"`
-	MainPID  int  `json:"mainPid"`
+	// Timer marks a .timer, which runs nothing itself and starts another unit
+	// on a schedule. Almost every field below means something else on one, so
+	// the screens branch on it rather than showing a memory figure for a clock.
+	Timer bool `json:"timer"`
+	// Triggers is the unit a timer starts — the other half of the pair, and the
+	// mirror of StartedBy. Empty on anything that is not a timer.
+	Triggers string `json:"triggers,omitempty"`
+	// NextS is how many seconds until a timer next fires, and LastS how long
+	// ago it last did. Both are 0 where systemd does not say: a timer that is
+	// not running has no next, and one that has never fired has no last.
+	NextS   int64 `json:"nextS,omitempty"`
+	LastS   int64 `json:"lastS,omitempty"`
+	MainPID int   `json:"mainPid"`
 	// Memory is what the unit's cgroup is using now; 0 where systemd does not
 	// account for it.
 	Memory int64 `json:"memory"`
@@ -101,7 +120,7 @@ type Unit struct {
 	StartedBy []string `json:"startedBy,omitempty"`
 }
 
-// UnitList is every hand-installed service on a host.
+// UnitList is every hand-installed service and timer on a host.
 type UnitList struct {
 	Units []Unit `json:"units"`
 	// AsUser is who the commands ran as — root wherever sudo is available.
@@ -123,9 +142,15 @@ type UnitLog struct {
 
 // showProps is the property set every screen is built from. Id comes first
 // because it is what separates one unit's block from the next.
+//
+// The last four are a timer's: Unit is what it starts, and the elapse stamps
+// are when it next will and when it last did. systemd leaves out a property the
+// unit type does not have rather than erroring, so they cost a service nothing
+// but the asking.
 const showProps = `-p Id -p Description -p LoadState -p ActiveState -p SubState ` +
 	`-p UnitFileState -p FragmentPath -p MainPID -p MemoryCurrent -p NRestarts ` +
-	`-p Result -p LoadError -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic`
+	`-p Result -p LoadError -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic ` +
+	`-p Unit -p NextElapseUSecRealtime -p NextElapseUSecMonotonic -p LastTriggerUSec`
 
 // startedByOrder is systemd's reverse dependencies, most specific relation
 // first, and the properties that carry them. Every one of these starts the unit
@@ -154,26 +179,30 @@ const startedByProps = ` -p TriggeredBy -p BoundBy -p RequiredBy -p UpheldBy -p 
 // script at a directory it built.
 var unitDirs = []string{"/etc/systemd/system", "/usr/local/lib/systemd/system"}
 
-// unitListScript names every service file in the directories it is given, then
-// describes them all in one systemctl call. Globs that match nothing expand to
-// themselves, hence the -e test; a directory that does not exist is skipped
-// rather than being an error.
+// unitListScript names every service and timer file in the directories it is
+// given, then describes them all in one systemctl call. Globs that match
+// nothing expand to themselves, hence the -e test; a directory that does not
+// exist is skipped rather than being an error.
 //
-// The uptime goes back too: systemd reports state changes as microseconds since
-// boot, and the machine's own clock is the only thing that turns one into "for
-// three days".
+// The clock and the uptime go back too: systemd reports state changes as
+// microseconds since boot and a timer's next run as microseconds since either
+// the epoch or boot, depending on how the timer was written. Only the machine's
+// own clock turns those into "for three days" and "in four hours", and it has
+// to be the machine's rather than Deployer's — the two are on different boxes
+// and need not agree.
 const unitListScript = `set -u
 limit=$1
 shift
 command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on this host\n' >&2; exit 2; }
 printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
 printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+printf '@@now\n%s\n' "$(date +%s 2>/dev/null || echo 0)"
 seen=' '
 names=''
 n=0
 for d in "$@"; do
   [ -d "$d" ] || continue
-  for f in "$d"/*.service; do
+  for f in "$d"/*.service "$d"/*.timer; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     b=${f##*/}
     case "$b" in *[!A-Za-z0-9_.:@-]*) continue;; esac
@@ -190,7 +219,7 @@ set -f
 systemctl show --no-pager ` + showProps + ` -- $names
 `
 
-// Units lists the services someone installed on this host by hand.
+// Units lists the services and timers someone installed on this host by hand.
 //
 // $names goes to systemctl unquoted so the shell splits it back into one
 // argument per unit — safe because the loop above drops any name with a
@@ -215,6 +244,7 @@ u=$1
 command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on this host\n' >&2; exit 2; }
 printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
 printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+printf '@@now\n%s\n' "$(date +%s 2>/dev/null || echo 0)"
 printf '@@units\n'
 systemctl show --no-pager ` + showProps + startedByProps + ` -- "$u"
 `
@@ -299,6 +329,7 @@ trap - EXIT
 systemctl daemon-reload || { printf 'could not reload systemd\n' >&2; exit 9; }
 printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
 printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
+printf '@@now\n%s\n' "$(date +%s 2>/dev/null || echo 0)"
 printf '@@units\n'
 systemctl show --no-pager ` + showProps + ` -- "$u"
 `
@@ -317,7 +348,7 @@ func (s *Service) CreateUnit(ctx context.Context, h *store.Host, name, content s
 	if err != nil {
 		return nil, err
 	}
-	if strings.HasSuffix(clean, "@.service") {
+	if isTemplate(clean) {
 		return nil, invalid("Deployer does not create template units")
 	}
 	if strings.TrimSpace(content) == "" {
@@ -562,8 +593,11 @@ func parseUnitList(out string) *UnitList {
 		AsUser:    first(found["user"]),
 		Truncated: len(found["truncated"]) > 0,
 	}
-	uptime := parseSeconds(first(found["uptime"]))
-	for _, unit := range parseShowBlocks(found["units"], uptime) {
+	clock := hostClock{
+		uptime: parseSeconds(first(found["uptime"])),
+		now:    int64(parseSeconds(first(found["now"]))),
+	}
+	for _, unit := range parseShowBlocks(found["units"], clock) {
 		list.Units = append(list.Units, unit)
 	}
 	// By name, always. A list that reordered itself as services started and
@@ -575,17 +609,29 @@ func parseUnitList(out string) *UnitList {
 	return list
 }
 
+// hostClock is the host's own sense of time, which every age and countdown on
+// these screens is measured against. systemd answers in microseconds since boot
+// or microseconds since the epoch and never in words, and the two boxes need
+// not agree about either, so both come back with the properties they explain.
+type hostClock struct {
+	// uptime is seconds since boot, and now seconds since the epoch. Zero for
+	// either means the host did not say, which leaves the stamps it explains
+	// unreadable rather than wrong.
+	uptime float64
+	now    int64
+}
+
 // parseShowBlocks splits systemctl's key=value output into one unit per Id.
 // systemctl prints properties in the order they were asked for and Id is asked
 // for first, so an Id line is where the next unit begins.
-func parseShowBlocks(lines []string, uptime float64) []Unit {
+func parseShowBlocks(lines []string, clock hostClock) []Unit {
 	var units []Unit
 	var props map[string]string
 	flush := func() {
 		if props == nil {
 			return
 		}
-		if unit, ok := unitFromProps(props, uptime); ok {
+		if unit, ok := unitFromProps(props, clock); ok {
 			units = append(units, unit)
 		}
 		props = nil
@@ -609,7 +655,7 @@ func parseShowBlocks(lines []string, uptime float64) []Unit {
 
 // unitFromProps turns one block of properties into a Unit, dropping anything
 // that did not come with a name.
-func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
+func unitFromProps(props map[string]string, clock hostClock) (Unit, bool) {
 	name := strings.TrimSpace(props["Id"])
 	if name == "" {
 		return Unit{}, false
@@ -624,7 +670,8 @@ func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
 		Path:        props["FragmentPath"],
 		Result:      props["Result"],
 		LoadError:   loadError(props["LoadError"]),
-		Template:    strings.HasSuffix(name, "@.service"),
+		Template:    isTemplate(name),
+		Timer:       strings.HasSuffix(name, ".timer"),
 		MainPID:     atoi(props["MainPID"]),
 		Restarts:    atoi(props["NRestarts"]),
 		Memory:      memoryBytes(props["MemoryCurrent"]),
@@ -638,8 +685,61 @@ func unitFromProps(props map[string]string, uptime float64) (Unit, bool) {
 	if unit.Active == "active" || unit.Active == "activating" || unit.Active == "reloading" {
 		stamp = props["ActiveEnterTimestampMonotonic"]
 	}
-	unit.SinceS = sinceSeconds(stamp, uptime)
+	unit.SinceS = sinceSeconds(stamp, clock.uptime)
+	if unit.Timer {
+		unit.Triggers = strings.TrimSpace(props["Unit"])
+		unit.NextS = nextElapse(props, clock)
+		unit.LastS = agoSeconds(props["LastTriggerUSec"], clock.now)
+	}
 	return unit, true
+}
+
+// isTemplate reports whether a unit name is a pattern rather than a unit —
+// systemd's foo@.service, whose instance is empty. A timer is as capable of
+// being one as a service.
+func isTemplate(name string) bool {
+	return strings.HasSuffix(name, "@.service") || strings.HasSuffix(name, "@.timer")
+}
+
+// nextElapse is how long until a timer fires again, in seconds.
+//
+// systemd answers in whichever clock the timer was written against: OnCalendar
+// gives a realtime stamp, OnBootSec and OnUnitActiveSec give a monotonic one,
+// and a timer with both has both. The realtime one is preferred because it is
+// the one a calendar timer — by far the common case — is precise about, and the
+// unused half comes back as 0 or as an unsigned -1 rather than being absent.
+//
+// A timer that is not running has neither, which is 0: no next run rather than
+// one due this instant. A stamp in the past is 0 too, which reads as "due".
+func nextElapse(props map[string]string, clock hostClock) int64 {
+	if at := microSeconds(props["NextElapseUSecRealtime"]); at > 0 && clock.now > 0 {
+		return max(at-clock.now, 0)
+	}
+	if at := microSeconds(props["NextElapseUSecMonotonic"]); at > 0 && clock.uptime > 0 {
+		return max(at-int64(clock.uptime), 0)
+	}
+	return 0
+}
+
+// agoSeconds turns a realtime stamp into how long ago it was. Zero means it has
+// not happened — a timer that has never fired since boot has no last run.
+func agoSeconds(stamp string, now int64) int64 {
+	at := microSeconds(stamp)
+	if at <= 0 || now <= 0 {
+		return 0
+	}
+	return max(now-at, 0)
+}
+
+// microSeconds reads one of systemd's microsecond stamps as whole seconds. The
+// ones that do not apply come back as 0, as "infinity", or as an unsigned -1 —
+// a number bigger than any clock — and all three mean the same thing here.
+func microSeconds(value string) int64 {
+	n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	if err != nil || n > math.MaxInt64 {
+		return 0
+	}
+	return int64(n / 1e6)
 }
 
 // startedBy collects the units that pull this one in, in the order of
@@ -705,9 +805,10 @@ func parseSeconds(value string) float64 {
 	return secs
 }
 
-// CleanUnit normalizes a unit name from the browser. Deployer manages services,
-// so a name without the suffix gets one rather than being refused — ".service"
-// is the part nobody types.
+// CleanUnit normalizes a unit name from the browser. A name without a suffix
+// gets ".service" rather than being refused — it is the part nobody types, and
+// a timer is always named with its own suffix because that is the whole point
+// of the name.
 func CleanUnit(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
