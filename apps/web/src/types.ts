@@ -136,6 +136,17 @@ export interface ServiceUnit {
   path: string
   /** True for a foo@.service, which is a pattern rather than a service. */
   template: boolean
+  /** True for a .timer, which runs nothing itself and starts another unit on a
+   *  schedule. Most of the fields below mean something else on one. */
+  timer: boolean
+  /** For a timer: the unit it starts when it fires. */
+  triggers?: string
+  /** For a timer: seconds until it next fires. 0 where systemd does not say,
+   *  which is what a stopped timer says. */
+  nextS?: number
+  /** For a timer: how long ago it last fired, in seconds. 0 where it never
+   *  has. */
+  lastS?: number
   mainPid: number
   /** What its cgroup is using now; 0 where systemd does not account for it. */
   memory: number

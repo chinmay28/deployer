@@ -38,10 +38,18 @@ export function HomeBadge() {
 
 /** What a service is doing now. A one-shot unit that ran and exited is not
  *  running and has not failed either — calling that "stopped" would read as a
- *  problem, so it gets its own word. */
+ *  problem, so it gets its own word. An active timer is not running anything
+ *  either: it is armed and counting, which is the same good news said properly. */
 export function ServiceBadge({ unit }: { unit: ServiceUnit }) {
   switch (unit.active) {
     case 'active':
+      if (unit.timer) {
+        return (
+          <Badge tone="good" dot>
+            Waiting
+          </Badge>
+        )
+      }
       return unit.sub === 'exited' ? (
         <Badge tone="neutral" dot>
           Finished

@@ -49,22 +49,23 @@ func TestFileRequestsValidateThePath(t *testing.T) {
 	}
 }
 
-// The service screens name a unit in the query string or the body, and a name
-// that is not a service name is the request's problem, not the host's.
+// The service screens name a unit in the query string or the body. Services and
+// timers are what Deployer manages; anything else is the request's problem
+// rather than the host's, and is refused before a connection is opened.
 func TestServiceRequestsValidateTheUnitName(t *testing.T) {
 	_, h := testServer(t, "")
 	id := newHost(t, h)
 
 	cases := []struct{ name, method, path, body string }{
 		{"no name", "GET", "/api/hosts/%d/services/unit", ""},
-		{"a timer", "GET", "/api/hosts/%d/services/unit?name=backup.timer", ""},
+		{"a socket", "GET", "/api/hosts/%d/services/unit?name=photos.socket", ""},
 		{"a shell fragment", "GET", "/api/hosts/%d/services/unit?name=photos.service;reboot", ""},
 		{"a path", "GET", "/api/hosts/%d/services/unit?name=../../etc/passwd", ""},
 		{"logs without a name", "GET", "/api/hosts/%d/services/logs", ""},
-		{"logs for a socket", "GET", "/api/hosts/%d/services/logs?name=x.socket", ""},
+		{"logs for a mount", "GET", "/api/hosts/%d/services/logs?name=x.mount", ""},
 		{"an action with no unit", "POST", "/api/hosts/%d/services/action", `{"name":"","action":"start"}`},
 		{"deleting with no name", "DELETE", "/api/hosts/%d/services", ""},
-		{"deleting a timer", "DELETE", "/api/hosts/%d/services?name=backup.timer", ""},
+		{"deleting a target", "DELETE", "/api/hosts/%d/services?name=multi-user.target", ""},
 		{"creating with no name", "POST", "/api/hosts/%d/services", `{"name":"","content":"[Unit]"}`},
 		{"creating a template", "POST", "/api/hosts/%d/services", `{"name":"t@.service","content":"[Unit]"}`},
 		{"creating an empty unit", "POST", "/api/hosts/%d/services", `{"name":"a.service","content":"  "}`},

@@ -15,22 +15,29 @@ const LOG_LINES = [50, 200, 1000]
 /** Stopping something is worth a second tap; starting it is not. Disabling is
  *  the one that bites later — a service that no longer comes back after a
  *  reboot fails silently, months from now. */
-const CONFIRM: Partial<Record<ServiceAction, { title: string; body: string; verb: string }>> = {
+type Confirmation = { title: (what: string) => string; body: string; verb: string }
+
+const CONFIRM: Partial<Record<ServiceAction, Confirmation>> = {
   stop: {
-    title: 'Stop this service?',
+    title: (what) => `Stop ${what}?`,
     body: 'It stays stopped until something starts it again — a reboot, if it is enabled, or you.',
     verb: 'Stop',
   },
   disable: {
-    title: 'Stop starting this at boot?',
+    title: () => 'Stop starting this at boot?',
     body: 'It keeps running now, and will not come back on its own the next time the machine restarts.',
     verb: 'Disable',
   },
 }
 
 /**
- * One systemd service: what it is doing, the buttons that change that, the tail
- * of its journal, and its unit file.
+ * One systemd service or timer: what it is doing, the buttons that change that,
+ * the tail of its journal, and its unit file.
+ *
+ * A timer borrows this screen rather than getting one of its own. It is the
+ * same unit file, the same journal and the same buttons; what differs is that
+ * it runs nothing itself, so where a service has memory and a PID it has a
+ * schedule and the name of the unit it starts.
  *
  * Saving the unit file runs `systemctl daemon-reload` straight after, because a
  * unit file edited and not reloaded is a change that has not happened — the
@@ -67,6 +74,9 @@ export default function HostService() {
   } = useLoader(() => api.serviceLog(hostId, name, lines), [hostId, name, lines])
 
   const short = serviceName(name)
+  // Every noun on this screen was written for a service. A timer borrows the
+  // same screen, and the words have to follow it.
+  const kind = unit?.timer ? 'timer' : 'service'
 
   // systemctl waits for the service, and Deployer waits for systemctl: a unit
   // that takes half a minute to come up takes half a minute to answer.
@@ -141,19 +151,44 @@ export default function HostService() {
               <BootBadge unit={unit} />
             </div>
 
-            <div className="stats">
-              <Stat
-                label={active ? 'Running for' : 'Stopped for'}
-                value={unit.sinceS > 0 ? uptime(unit.sinceS) : '—'}
-              />
-              <Stat label="Memory" value={unit.memory > 0 ? bytes(unit.memory) : '—'} />
-              <Stat
-                label={unit.restarts > 0 ? 'Restarts' : 'Main PID'}
-                value={
-                  unit.restarts > 0 ? String(unit.restarts) : unit.mainPid > 0 ? String(unit.mainPid) : '—'
-                }
-              />
-            </div>
+            {/* A timer runs nothing, so it has no memory figure and no PID.
+                What it has is a schedule, which is the only reason to open
+                one. */}
+            {unit.timer ? (
+              <div className="stats">
+                <Stat label="Next run" value={nextRun(unit)} />
+                <Stat label="Last run" value={unit.lastS ? `${uptime(unit.lastS)} ago` : 'Never'} />
+                <Stat
+                  label={active ? 'Waiting for' : 'Stopped for'}
+                  value={unit.sinceS > 0 ? uptime(unit.sinceS) : '—'}
+                />
+              </div>
+            ) : (
+              <div className="stats">
+                <Stat
+                  label={active ? 'Running for' : 'Stopped for'}
+                  value={unit.sinceS > 0 ? uptime(unit.sinceS) : '—'}
+                />
+                <Stat label="Memory" value={unit.memory > 0 ? bytes(unit.memory) : '—'} />
+                <Stat
+                  label={unit.restarts > 0 ? 'Restarts' : 'Main PID'}
+                  value={
+                    unit.restarts > 0 ? String(unit.restarts) : unit.mainPid > 0 ? String(unit.mainPid) : '—'
+                  }
+                />
+              </div>
+            )}
+
+            {/* The other half of the pair. A timer on its own says when and
+                never what, so the unit it starts is a tap away. */}
+            {unit.timer && unit.triggers && (
+              <div style={{ marginTop: 12 }}>
+                <div className="sub">Starts this unit:</div>
+                <div className="unit-refs">
+                  <UnitRef hostId={hostId} name={unit.triggers} />
+                </div>
+              </div>
+            )}
 
             {unit.active === 'failed' && (
               <div style={{ marginTop: 12 }}>
@@ -183,8 +218,9 @@ export default function HostService() {
             {unit.template && (
               <div style={{ marginTop: 12 }}>
                 <Banner tone="warn">
-                  This is a template. Nothing starts it directly — systemd makes a service out of it
-                  per instance, named {short.replace(/@$/, '')}@something.service.
+                  This is a template. Nothing starts it directly — systemd makes a{' '}
+                  {unit.timer ? 'timer' : 'service'} out of it per instance, named{' '}
+                  {unit.name.replace('@.', '@something.')}.
                 </Banner>
               </div>
             )}
@@ -218,31 +254,43 @@ export default function HostService() {
                   </button>
                 </div>
                 <p className="sub" style={{ marginBottom: 0 }}>
-                  Deployer waits for systemd to finish, so a service that takes its time starting
+                  Deployer waits for systemd to finish, so a unit that takes its time starting
                   takes its time answering.
                 </p>
-                <button
-                  className="secondary block"
-                  style={{ marginTop: 10 }}
-                  onClick={() => ask('reload')}
-                  disabled={working}
-                >
-                  {busy === 'reload' ? 'Reloading…' : 'Reload its configuration'}
-                </button>
-                <p className="sub" style={{ marginBottom: 0, marginTop: 6 }}>
-                  Only services written to handle it can reload without stopping; systemd says so if
-                  this one can't.
-                </p>
+                {/* Reload is a signal to a running program to re-read its
+                    configuration. A timer is not a program, and systemd
+                    refuses — so the button is not offered rather than offered
+                    and refused. */}
+                {!unit.timer && (
+                  <>
+                    <button
+                      className="secondary block"
+                      style={{ marginTop: 10 }}
+                      onClick={() => ask('reload')}
+                      disabled={working}
+                    >
+                      {busy === 'reload' ? 'Reloading…' : 'Reload its configuration'}
+                    </button>
+                    <p className="sub" style={{ marginBottom: 0, marginTop: 6 }}>
+                      Only services written to handle it can reload without stopping; systemd says
+                      so if this one can't.
+                    </p>
+                  </>
+                )}
               </Card>
 
               <Card>
                 <div className="title">At boot</div>
                 <p className="sub" style={{ marginTop: 4, marginBottom: 0 }}>
                   {unit.fileState === 'enabled'
-                    ? `${short} starts by itself when the machine does.`
+                    ? unit.timer
+                      ? `${short} starts counting again whenever the machine does.`
+                      : `${short} starts by itself when the machine does.`
                     : unit.fileState === 'static'
                       ? `${short} has no [Install] section, so there is nothing to enable: it runs when another unit pulls it in, or when you start it here.`
-                      : `${short} only runs when something starts it. It will not come back after a reboot.`}
+                      : unit.timer
+                        ? `${short} is not armed at boot, so nothing it schedules will run until something starts it.`
+                        : `${short} only runs when something starts it. It will not come back after a reboot.`}
                 </p>
                 <StartedBy hostId={hostId} unit={unit} />
                 {unit.fileState !== 'static' && (
@@ -290,7 +338,9 @@ export default function HostService() {
               </Banner>
             )}
             <pre className="log" style={{ marginTop: 10 }}>
-              {log ? log.content.trimEnd() || 'Nothing in the journal for this service.' : 'Reading the journal…'}
+              {log
+                ? log.content.trimEnd() || `Nothing in the journal for this ${kind}.`
+                : 'Reading the journal…'}
             </pre>
           </Card>
 
@@ -307,7 +357,7 @@ export default function HostService() {
                 <p className="sub" style={{ marginTop: 0 }}>
                   Deleting removes <span className="mono">{unit.path}</span>, the links that
                   start it at boot, and any drop-in overrides. Whatever it runs stays where it
-                  is — this removes systemd's knowledge of the service, not the program.
+                  is — this removes systemd's knowledge of the {kind}, not the program.
                 </p>
                 {active && (
                   <Banner tone="warn">
@@ -321,7 +371,7 @@ export default function HostService() {
                   onClick={() => setConfirmDelete(true)}
                   disabled={active || working || deleting}
                 >
-                  Delete this service
+                  Delete this {kind}
                 </button>
               </Card>
             </>
@@ -356,7 +406,7 @@ export default function HostService() {
 
       {confirm && CONFIRM[confirm] && (
         <Sheet
-          title={CONFIRM[confirm]!.title}
+          title={CONFIRM[confirm]!.title(short)}
           subtitle={CONFIRM[confirm]!.body}
           onClose={() => setConfirm(null)}
         >
@@ -405,21 +455,30 @@ function StartedBy({ hostId, unit }: { hostId: number; unit: ServiceUnit }) {
         Started by {starters.length === 1 ? 'this unit' : `these ${starters.length} units`}:
       </div>
       <div className="unit-refs">
-        {starters.map((name) =>
-          // Only a service has a screen of its own. The socket, timer or target
-          // that started one is shown but goes nowhere, which is the truth: this
-          // app manages services and does not pretend to manage the rest.
-          name.endsWith('.service') ? (
-            <Link key={name} to={`/hosts/${hostId}/service?name=${encodeURIComponent(name)}`}>
-              {name}
-            </Link>
-          ) : (
-            <span key={name}>{name}</span>
-          ),
-        )}
+        {starters.map((name) => (
+          <UnitRef key={name} hostId={hostId} name={name} />
+        ))}
       </div>
     </div>
   )
+}
+
+/** Another unit by name. Services and timers have a screen of their own and are
+ *  a tap away; the socket or target that started one is named but goes nowhere,
+ *  which is the truth — Deployer manages those two kinds and does not pretend
+ *  to manage the rest. */
+function UnitRef({ hostId, name }: { hostId: number; name: string }) {
+  if (!name.endsWith('.service') && !name.endsWith('.timer')) return <span>{name}</span>
+  return <Link to={`/hosts/${hostId}/service?name=${encodeURIComponent(name)}`}>{name}</Link>
+}
+
+/** How long until a timer next fires. A timer that is not running has no next
+ *  run to count down to, which is not the same as one that is due. */
+function nextRun(unit: ServiceUnit): string {
+  if (unit.active !== 'active') return '—'
+  if (!unit.nextS) return 'Due'
+  if (unit.nextS < 60) return '< 1m'
+  return uptime(unit.nextS)
 }
 
 /** Where an administrator's own unit files live. The server decides this for
