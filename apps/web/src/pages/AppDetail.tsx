@@ -42,23 +42,34 @@ export default function AppDetail() {
     }
   }
 
-  const check = async (installation: Installation) => {
+  /**
+   * Which action is in flight, as `action:installationId`. Check goes over SSH
+   * or out to the app's own URL and can take seconds, so the button has to say
+   * it is working — a press that visibly does nothing reads as a press that
+   * did not land, and gets made again.
+   */
+  const [pending, setPending] = useState<string | null>(null)
+  const running = (action: string, installation: Installation) =>
+    pending === `${action}:${installation.id}`
+
+  const act = async (action: string, installation: Installation, run: () => Promise<unknown>) => {
+    setPending(`${action}:${installation.id}`)
+    setActionError(null)
     try {
-      await api.checkInstallation(installation.id)
+      await run()
       reloadInstalls()
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPending(null)
     }
   }
 
-  const forget = async (installation: Installation) => {
-    try {
-      await api.forgetInstallation(installation.id)
-      reloadInstalls()
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e))
-    }
-  }
+  const check = (installation: Installation) =>
+    act('check', installation, () => api.checkInstallation(installation.id))
+
+  const forget = (installation: Installation) =>
+    act('forget', installation, () => api.forgetInstallation(installation.id))
 
   return (
     <Page
@@ -115,20 +126,40 @@ export default function AppDetail() {
                     <HealthBadge status={installation.healthStatus} />
                   </div>
                 </div>
-                {installation.healthDetail && (
+                {/* What the last check found, and when it ran. The time is
+                    what a Check that changes nothing has to show for itself —
+                    without it, confirming a healthy app still looks like a
+                    button that did nothing. */}
+                {(installation.healthDetail || installation.healthCheckedAt) && (
                   <div className="sub" style={{ marginTop: 8 }}>
-                    {installation.healthDetail}
+                    {parts(
+                      installation.healthDetail,
+                      installation.healthCheckedAt &&
+                        `checked ${ago(installation.healthCheckedAt)}`,
+                    )}
                   </div>
                 )}
                 <div className="actions">
-                  <button className="primary" onClick={() => setDeployTarget(installation)}>
+                  <button
+                    className="primary"
+                    onClick={() => setDeployTarget(installation)}
+                    disabled={!!pending}
+                  >
                     Redeploy
                   </button>
-                  <button className="secondary" onClick={() => check(installation)}>
-                    Check
+                  <button
+                    className="secondary"
+                    onClick={() => check(installation)}
+                    disabled={!!pending}
+                  >
+                    {running('check', installation) ? 'Checking…' : 'Check'}
                   </button>
-                  <button className="secondary" onClick={() => forget(installation)}>
-                    Forget
+                  <button
+                    className="secondary"
+                    onClick={() => forget(installation)}
+                    disabled={!!pending}
+                  >
+                    {running('forget', installation) ? 'Forgetting…' : 'Forget'}
                   </button>
                 </div>
               </Card>
