@@ -555,6 +555,23 @@ button.card {
   transition: width 0.4s ease;
 }
 
+/* A range bar fills only the part of the track the metric moved through, so its
+   span is offset rather than starting at zero, and carries a tick at the mean. */
+.bar.range {
+  position: relative;
+}
+
+.bar.range > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 999px;
+  background: var(--text);
+  opacity: 0.7;
+}
+
 .bar.warn > span {
   background: var(--warn);
 }

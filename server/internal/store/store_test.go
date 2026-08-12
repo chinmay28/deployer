@@ -134,6 +134,58 @@ func TestHostStatusTransitions(t *testing.T) {
 	}
 }
 
+func TestSummarySince(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	h, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "a", Port: 22, Username: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	// Two samples inside the day and one older than it, which must not count.
+	samples := []*Sample{
+		{HostID: h.ID, TakenAt: now.Add(-2 * time.Hour), CPUPct: 10, MemUsed: 2000, MemTotal: 8000},
+		{HostID: h.ID, TakenAt: now, CPUPct: 30, MemUsed: 6000, MemTotal: 8000},
+		{HostID: h.ID, TakenAt: now.Add(-48 * time.Hour), CPUPct: 99, MemUsed: 7999, MemTotal: 8000},
+	}
+	for _, s := range samples {
+		if err := db.InsertSample(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := db.SummarySince(ctx, h.ID, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Samples != 2 {
+		t.Fatalf("samples = %d, want 2 — the 48h-old one is outside the window", got.Samples)
+	}
+	if got.CPUPct != (Stat{Min: 10, Max: 30, Avg: 20}) {
+		t.Errorf("cpu = %+v, want 10/30/20", got.CPUPct)
+	}
+	if got.MemPct != (Stat{Min: 25, Max: 75, Avg: 50}) {
+		t.Errorf("mem pct = %+v, want 25/75/50", got.MemPct)
+	}
+	if got.MemUsed != (Stat{Min: 2000, Max: 6000, Avg: 4000}) {
+		t.Errorf("mem used = %+v, want 2000/6000/4000", got.MemUsed)
+	}
+	if got.MemTotal != 8000 {
+		t.Errorf("mem total = %d, want 8000", got.MemTotal)
+	}
+
+	// A host with no history in the window summarizes to zeroes, not an error:
+	// every aggregate but the count comes back NULL.
+	empty, err := db.SummarySince(ctx, h.ID, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("SummarySince over an empty window: %v", err)
+	}
+	if empty.Samples != 0 || empty.CPUPct != (Stat{}) || empty.MemUsed != (Stat{}) {
+		t.Errorf("empty window = %+v, want zeroes", empty)
+	}
+}
+
 func TestSamplesRoundTripAndPrune(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()

@@ -21,6 +21,27 @@ export interface Sample {
   disks: Disk[]
 }
 
+/** What one metric did over a window: its floor, its ceiling and its mean. */
+export interface Stat {
+  min: number
+  max: number
+  avg: number
+}
+
+/** A host's CPU and memory over the last day, reduced by the server so the
+ *  phone never carries a day of samples to work out six numbers. */
+export interface MetricSummary {
+  hostId: number
+  since: string
+  /** How many samples the numbers came from. Zero on a host with no history. */
+  samples: number
+  cpuPct: Stat
+  /** The share of memory in use, and the same thing in bytes. */
+  memPct: Stat
+  memUsed: Stat
+  memTotal: number
+}
+
 export interface Host {
   id: number
   name: string

@@ -10,6 +10,10 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
+// summaryWindow is how far back the CPU and memory ranges reach. It matches
+// how long the poller keeps samples, so the summary covers everything there is.
+const summaryWindow = 24 * time.Hour
+
 // hostView is a host plus its most recent telemetry.
 type hostView struct {
 	*store.Host
@@ -203,10 +207,19 @@ func (s *Server) handleHostMetrics(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "host metrics")
 		return
 	}
+	// The summary covers the whole day whatever window the samples cover: it is
+	// the answer to "is this normal for the machine?", which an hour of history
+	// cannot give.
+	summary, err := s.DB.SummarySince(r.Context(), h.ID, time.Now().Add(-summaryWindow))
+	if err != nil {
+		s.writeStoreError(w, err, "host metrics")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hostId":  h.ID,
 		"minutes": minutes,
 		"samples": samples,
+		"summary": summary,
 	})
 }
 

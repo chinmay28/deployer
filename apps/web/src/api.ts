@@ -9,6 +9,7 @@ import type {
   HostTestResult,
   Installation,
   JournalStorage,
+  MetricSummary,
   Overview,
   ProvisionResult,
   Sample,
@@ -80,8 +81,10 @@ export const api = {
   /** One-time setup. The password is sent, used and forgotten — never stored. */
   provisionHost: (id: number, password: string) =>
     request<ProvisionResult>(`/api/hosts/${id}/provision`, { method: 'POST', ...json({ password }) }),
+  /** Samples cover the window asked for; the summary always covers the last 24
+   *  hours, which is everything the server keeps. */
   hostMetrics: (id: number, minutes = 60) =>
-    request<{ hostId: number; minutes: number; samples: Sample[] }>(
+    request<{ hostId: number; minutes: number; samples: Sample[]; summary: MetricSummary }>(
       `/api/hosts/${id}/metrics?minutes=${minutes}`,
     ),
   /** Restart the machine. It goes down a few seconds after this returns.

@@ -4,9 +4,20 @@ import { api } from '../api'
 import { Page } from '../components/Layout'
 import { SetupSheet } from '../components/provision'
 import { DeploymentBadge, HomeBadge, HostBadge } from '../components/status'
-import { Badge, Banner, Card, Loading, Meter, SectionTitle, Sheet, Sparkline, useLoader } from '../components/ui'
+import {
+  Badge,
+  Banner,
+  Card,
+  Loading,
+  Meter,
+  RangeBar,
+  SectionTitle,
+  Sheet,
+  Sparkline,
+  useLoader,
+} from '../components/ui'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
-import type { HostTestResult } from '../types'
+import type { HostTestResult, Stat } from '../types'
 
 export default function HostDetail() {
   const { id } = useParams()
@@ -70,6 +81,7 @@ export default function HostDetail() {
 
   const sample = host?.latest
   const cpuHistory = metrics?.samples.map((s) => s.cpuPct) ?? []
+  const summary = metrics?.summary
 
   return (
     <Page
@@ -167,6 +179,27 @@ export default function HostDetail() {
                 <b>{metrics ? `${metrics.samples.length} samples` : ''}</b>
               </div>
               <Sparkline values={cpuHistory} />
+
+              {/* The reading above is one moment, which says nothing about
+                  whether it is normal for this machine. The day's range and
+                  average are what answer that. */}
+              {summary && summary.samples > 0 && (
+                <>
+                  <div className="list-divider" />
+                  <div className="meter-label" style={{ marginBottom: 10 }}>
+                    <span>Last 24 hours</span>
+                    <b>{summary.samples.toLocaleString()} samples</b>
+                  </div>
+                  <Range label="CPU" stat={summary.cpuPct} />
+                  <Range
+                    label="Memory"
+                    stat={summary.memPct}
+                    detail={`${span(summary.memUsed.min, summary.memUsed.max, bytes)} of ${bytes(
+                      summary.memTotal,
+                    )} used, ${bytes(summary.memUsed.avg)} on average`}
+                  />
+                </>
+              )}
 
               <div className="list-divider" />
               {sample.disks.map((disk) => (
@@ -399,6 +432,41 @@ export default function HostDetail() {
       )}
     </Page>
   )
+}
+
+/** Range is one metric's day: the band it moved through, and its average. */
+function Range({ label, stat, detail }: { label: string; stat: Stat; detail?: string }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="meter-label">
+        <span>
+          {label} {span(stat.min, stat.max, pct)}
+        </span>
+        <b>avg {pct(stat.avg)}</b>
+      </div>
+      <RangeBar
+        label={`${label} over the last 24 hours`}
+        min={stat.min}
+        max={stat.max}
+        avg={stat.avg}
+      />
+      {detail && (
+        <div className="sub" style={{ marginTop: 4, fontSize: 11 }}>
+          {detail}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const pct = (n: number) => `${Math.round(n)}%`
+
+/** span writes a low and a high as one figure where they read the same, so a
+ *  machine that has not moved says "12%" rather than "12–12%". */
+function span(min: number, max: number, format: (n: number) => string): string {
+  const low = format(min)
+  const high = format(max)
+  return low === high ? low : `${low}–${high}`
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
