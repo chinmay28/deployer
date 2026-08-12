@@ -1,8 +1,8 @@
 // Package version carries Deployer's version number.
 //
 // The scheme is vMAJOR.MINOR.PATCH where the patch number is the repository's
-// commit count — every commit is a patch release, so `v0.1.42` is the 42nd
-// commit on the 0.1 line. Major and minor are declared here in source and
+// commit count — every commit is a patch release, so `v1.0.42` is the 42nd
+// commit on the 1.0 line. Major and minor are declared here in source and
 // bumped by hand; the patch number can only come from git, which a compiled
 // binary has no access to, so it is stamped at link time instead:
 //
@@ -17,8 +17,8 @@ import "strconv"
 
 // Major and minor version. Bump these by hand.
 const (
-	Major = 0
-	Minor = 1
+	Major = 1
+	Minor = 0
 )
 
 // Patch is the repository's commit count, stamped at link time (see the

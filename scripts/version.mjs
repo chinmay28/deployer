@@ -3,7 +3,7 @@
  * The one place Deployer's version number is assembled.
  *
  * Scheme: vMAJOR.MINOR.PATCH, where PATCH is the repository's commit count —
- * every commit is a patch release, so `v0.1.42` is the 42nd commit on the 0.1
+ * every commit is a patch release, so `v1.0.42` is the 42nd commit on the 1.0
  * line.
  *
  *   - MAJOR/MINOR are source constants, read out of
@@ -14,7 +14,7 @@
  *     it inlined by Vite. Both call this file, so they can never disagree.
  *
  * Usage:
- *   node scripts/version.mjs            # print e.g. v0.1.42
+ *   node scripts/version.mjs            # print e.g. v1.0.42
  *   node scripts/version.mjs --patch    # print just the commit count (42)
  *   import { appVersion } from './scripts/version.mjs'
  */

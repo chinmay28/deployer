@@ -388,8 +388,8 @@ make version        # print the version this tree would build as
 ### Versioning
 
 The version is `vMAJOR.MINOR.PATCH`, where the patch number is the repository's
-commit count — every commit is a patch release, so `v0.1.42` is the 42nd commit
-on the 0.1 line. Major and minor are constants in
+commit count — every commit is a patch release, so `v1.0.42` is the 42nd commit
+on the 1.0 line. Major and minor are constants in
 `server/internal/version/version.go`, bumped by hand.
 
 The patch number only exists at build time, so `scripts/version.mjs` works it
