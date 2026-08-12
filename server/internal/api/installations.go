@@ -9,10 +9,10 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
-// withDerived fills in the ports each installation answers on and the address
-// to open it at. The database has no column for either — they are read back out
-// of the health check and the parameters — so every response that carries
-// installations goes through here.
+// withDerived fills in the ports each installation answers on, the address to
+// open it at and the version it is running. The database has no column for any
+// of them — they are read back out of the health check and the parameters — so
+// every response that carries installations goes through here.
 func withDerived(list []*store.Installation) []*store.Installation {
 	for _, in := range list {
 		derive(in)
@@ -25,6 +25,7 @@ func withDerived(list []*store.Installation) []*store.Installation {
 func derive(in *store.Installation) {
 	in.Ports = deploy.InstallationPorts(in)
 	in.URL = deploy.InstallationURL(in)
+	in.Version = deploy.InstallationVersion(in)
 }
 
 func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request) {

@@ -116,6 +116,7 @@ export default function AppDetail() {
                     <div className="sub">
                       {parts(
                         installation.hostAddress,
+                        installation.version,
                         ports(installation.ports),
                         `updated ${ago(installation.updatedAt)}`,
                       )}

@@ -152,6 +152,14 @@ ago`. Knowing an app is healthy is only half of knowing where to open it.
 Nothing is scanned and nothing is guessed — an app that declares neither shows
 no port at all.
 
+The **version** running there comes from the same place. An install command that
+can install more than one version takes it as a parameter — `ref`, `tag`,
+`version` — and Deployer keeps the parameters of the last deploy, so the card
+reads `On nakedpi · v1.4.0 · port 8787 · updated 3 min ago`. A full commit hash
+is shortened the way git shows one; an app deployed to several hosts shows the
+version they agree on, or `2 versions` when they don't. An app whose command
+installs whatever is current pins no version, and none is claimed for it.
+
 An address is also a link, so every app Deployer can place gets an **Open**
 button — on the dashboard, in the Apps tab and on the app's own page — which
 hands it to the phone's browser, outside the PWA, where it can be bookmarked and

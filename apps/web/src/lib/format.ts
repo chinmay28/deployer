@@ -81,6 +81,17 @@ export function ports(list: number[] | undefined): string {
   return `${list.length === 1 ? 'port' : 'ports'} ${list.join(', ')}`
 }
 
+/** The version an app is running across the hosts it is on: the one they
+ *  agree on, or "2 versions" when they don't, because which host is behind is
+ *  a question for the app's own page. Hosts that name no version are not
+ *  counted — and when none of them do, nothing is shown. */
+export function versions(list: (string | undefined)[]): string {
+  const distinct = [...new Set(list.filter((v): v is string => !!v))]
+  if (distinct.length === 0) return ''
+  if (distinct.length === 1) return distinct[0]
+  return `${distinct.length} versions`
+}
+
 /** parts joins the pieces of a card's subtitle, dropping the ones that had
  *  nothing to say. */
 export function parts(...pieces: (string | false | null | undefined)[]): string {
