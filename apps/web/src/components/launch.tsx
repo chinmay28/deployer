@@ -15,7 +15,7 @@ import { Sheet } from './ui'
  */
 export function LaunchButton({
   installations,
-  className = 'ghost',
+  className = 'open-chip',
   label = 'Open',
 }: {
   /** The installations this button can open: one card's, or all of an app's. */
@@ -48,6 +48,7 @@ export function LaunchButton({
         onClick={press}
         title={targets.length === 1 ? targets[0].url : 'Open on…'}
       >
+        <LaunchIcon />
         {label}
       </button>
 
@@ -70,8 +71,11 @@ export function LaunchButton({
                     close()
                   }}
                 >
-                  <span className="title">{installation.hostName}</span>
-                  <span className="sub">{url}</span>
+                  <span className="grow">
+                    <span className="title">{installation.hostName}</span>
+                    <span className="sub">{url}</span>
+                  </span>
+                  <LaunchIcon />
                 </button>
               ))}
             </div>
@@ -79,5 +83,26 @@ export function LaunchButton({
           document.body,
         )}
     </>
+  )
+}
+
+/** An arrow leaving its frame: the app opens away from Deployer, in the
+ *  browser, rather than in the screen the button is on. */
+function LaunchIcon() {
+  return (
+    <svg
+      className="launch-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M13.5 4.5H19.5V10.5" />
+      <path d="M19.5 4.5 11 13" />
+      <path d="M18 14.5v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6h4" />
+    </svg>
   )
 }
