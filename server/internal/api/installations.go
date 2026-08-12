@@ -9,14 +9,22 @@ import (
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
-// withPorts fills in the ports each installation answers on. The database has
-// no column for them — they are read back out of the health check and the
-// parameters — so every response that carries installations goes through here.
-func withPorts(list []*store.Installation) []*store.Installation {
+// withDerived fills in the ports each installation answers on and the address
+// to open it at. The database has no column for either — they are read back out
+// of the health check and the parameters — so every response that carries
+// installations goes through here.
+func withDerived(list []*store.Installation) []*store.Installation {
 	for _, in := range list {
-		in.Ports = deploy.InstallationPorts(in)
+		derive(in)
 	}
 	return list
+}
+
+// derive fills in the fields of one installation that are worked out rather
+// than stored.
+func derive(in *store.Installation) {
+	in.Ports = deploy.InstallationPorts(in)
+	in.URL = deploy.InstallationURL(in)
 }
 
 func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +33,7 @@ func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request)
 		s.writeStoreError(w, err, "list installations")
 		return
 	}
-	writeJSON(w, http.StatusOK, withPorts(list))
+	writeJSON(w, http.StatusOK, withDerived(list))
 }
 
 func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +42,7 @@ func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "get installation")
 		return
 	}
-	in.Ports = deploy.InstallationPorts(in)
+	derive(in)
 	writeJSON(w, http.StatusOK, in)
 }
 
@@ -124,7 +132,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hostList {
 		views = append(views, hostView{Host: h, Latest: latest[h.ID]})
 	}
-	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: withPorts(installs), Recent: recent})
+	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: withDerived(installs), Recent: recent})
 }
 
 func (s *Server) installationFromPath(r *http.Request) (*store.Installation, error) {

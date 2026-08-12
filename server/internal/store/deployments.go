@@ -211,6 +211,10 @@ type Installation struct {
 	// parameters rather than stored. Filled in on the way out; see
 	// deploy.InstallationPorts.
 	Ports []int `json:"ports,omitempty"`
+
+	// URL is where to open the app in a browser, from the same two sources and
+	// on the same terms: empty when neither says. See deploy.InstallationURL.
+	URL string `json:"url,omitempty"`
 }
 
 const installationColumns = `i.id, i.app_id, i.host_id, i.params, i.last_deployment_id,

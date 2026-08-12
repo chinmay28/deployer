@@ -152,6 +152,17 @@ ago`. Knowing an app is healthy is only half of knowing where to open it.
 Nothing is scanned and nothing is guessed — an app that declares neither shows
 no port at all.
 
+An address is also a link, so every app Deployer can place gets an **Open**
+button — on the dashboard, in the Apps tab and on the app's own page — which
+hands it to the phone's browser, outside the PWA, where it can be bookmarked and
+shared like any other page. It opens the app's own root rather than the health
+path: `/healthz` is where an app reports on itself, not where it greets a
+person. An app deployed to several hosts asks which one instead of picking. An
+app on the machine Deployer runs on is registered under `127.0.0.1`, which on a
+phone means the phone, so the link uses the address you reached Deployer at
+instead. An app that has declared neither a URL nor a port gets no button, on
+the same grounds as the missing port: a dead link is worse than none.
+
 ## Deploying
 
 Deploy picks a host, shows the parameters, and shows the exact command that will

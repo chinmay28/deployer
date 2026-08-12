@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { LaunchButton } from '../components/launch'
 import { TabPage } from '../components/Layout'
 import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
@@ -55,7 +56,10 @@ export default function Overview() {
                       )}
                     </div>
                   </div>
-                  <HealthBadge status={install.healthStatus} />
+                  <div className="row" style={{ gap: 6 }}>
+                    <LaunchButton installations={[install]} />
+                    <HealthBadge status={install.healthStatus} />
+                  </div>
                 </div>
               </Link>
             ))
