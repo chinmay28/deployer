@@ -60,6 +60,43 @@ export function Meter({
   )
 }
 
+/** RangeBar shows where a metric sat over a window rather than where it is now:
+ *  a band from its low to its high, with a tick at the average. The colour
+ *  follows the high, since that is the figure that means trouble. */
+export function RangeBar({
+  label,
+  min,
+  max,
+  avg,
+}: {
+  label: string
+  min: number
+  max: number
+  avg: number
+}) {
+  const lo = clampPct(min)
+  const hi = clampPct(max)
+  return (
+    <div
+      className={`bar range ${severity(hi)}`}
+      role="meter"
+      aria-label={label}
+      aria-valuenow={Math.round(clampPct(avg))}
+      aria-valuemin={Math.round(lo)}
+      aria-valuemax={Math.round(hi)}
+    >
+      {/* A flat metric would otherwise be an invisible band, so the span keeps a
+          sliver of width whatever the range. */}
+      <span style={{ marginLeft: `${lo}%`, width: `${Math.max(hi - lo, 1.5)}%` }} />
+      <i style={{ left: `${clampPct(avg)}%` }} />
+    </div>
+  )
+}
+
+function clampPct(v: number): number {
+  return Math.min(100, Math.max(0, v || 0))
+}
+
 export function Empty({ message, action }: { message: string; action?: ReactNode }) {
   return (
     <div className="empty">

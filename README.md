@@ -321,6 +321,15 @@ real interval average rather than an average since boot.
 Hosts are polled every 30s in the background and every 5s while you have a host
 open. Samples are kept for 24 hours.
 
+**A number on its own does not say whether it is normal.** 40% CPU means one
+thing on a machine that idles at 5% and another on one that sits at 35% all day,
+so a host shows the range its CPU and memory moved through over the last 24
+hours with the average marked inside it. The band is the day; the tick is the
+mean. That is the whole of the retention window, so it is everything Deployer
+knows about the machine. The arithmetic is done in SQL and only the six numbers
+are sent — a phone polling every few seconds never carries a day of samples to
+work them out.
+
 ## Security
 
 Deployer holds a key that can run commands as root on every host you add. Treat

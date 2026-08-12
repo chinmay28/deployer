@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
 )
@@ -101,6 +102,65 @@ func (d *DB) SamplesSince(ctx context.Context, hostID int64, cutoff time.Time) (
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// Stat is what one metric did over a window: how low it went, how high, and
+// what it averaged in between.
+type Stat struct {
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+	Avg float64 `json:"avg"`
+}
+
+// Summary is a host's CPU and memory over a window, reduced to the three
+// numbers worth reading: the range and the average.
+type Summary struct {
+	HostID int64     `json:"hostId"`
+	Since  time.Time `json:"since"`
+	// Samples is how many points the numbers were drawn from — a range over two
+	// samples means much less than one over a day of them.
+	Samples int  `json:"samples"`
+	CPUPct  Stat `json:"cpuPct"`
+	// MemPct is the share of memory in use, MemUsed the same thing in bytes, so
+	// the UI can say either without asking twice.
+	MemPct   Stat  `json:"memPct"`
+	MemUsed  Stat  `json:"memUsed"`
+	MemTotal int64 `json:"memTotal"`
+}
+
+// SummarySince reduces a host's samples newer than cutoff to ranges and
+// averages. The arithmetic is left to SQLite on purpose: a day of telemetry is
+// thousands of rows, and a phone polling every few seconds should carry three
+// numbers rather than all of them.
+func (d *DB) SummarySince(ctx context.Context, hostID int64, cutoff time.Time) (*Summary, error) {
+	row := d.sql.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			MIN(cpu_pct), MAX(cpu_pct), AVG(cpu_pct),
+			MIN(mem_pct), MAX(mem_pct), AVG(mem_pct),
+			MIN(mem_used), MAX(mem_used), AVG(mem_used),
+			MAX(mem_total)
+		FROM (
+			SELECT cpu_pct, mem_used, mem_total,
+				CASE WHEN mem_total > 0 THEN mem_used * 100.0 / mem_total END AS mem_pct
+			FROM metric_samples
+			WHERE host_id = ? AND taken_at >= ?
+		)`, hostID, cutoff.UTC().Format(time.RFC3339Nano))
+
+	s := &Summary{HostID: hostID, Since: cutoff.UTC()}
+	// Every aggregate but the count is NULL over an empty window, and mem_pct is
+	// NULL for any sample a host reported no memory total for.
+	var cpuMin, cpuMax, cpuAvg, memPctMin, memPctMax, memPctAvg sql.NullFloat64
+	var memMin, memMax, memAvg, memTotal sql.NullFloat64
+	if err := row.Scan(&s.Samples, &cpuMin, &cpuMax, &cpuAvg,
+		&memPctMin, &memPctMax, &memPctAvg,
+		&memMin, &memMax, &memAvg, &memTotal); err != nil {
+		return nil, err
+	}
+	s.CPUPct = Stat{Min: cpuMin.Float64, Max: cpuMax.Float64, Avg: cpuAvg.Float64}
+	s.MemPct = Stat{Min: memPctMin.Float64, Max: memPctMax.Float64, Avg: memPctAvg.Float64}
+	s.MemUsed = Stat{Min: memMin.Float64, Max: memMax.Float64, Avg: memAvg.Float64}
+	s.MemTotal = int64(memTotal.Float64)
+	return s, nil
 }
 
 // PruneSamples deletes telemetry older than cutoff and returns the row count.

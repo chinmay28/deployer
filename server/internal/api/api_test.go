@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
@@ -170,12 +171,52 @@ func TestHostMetricsEmpty(t *testing.T) {
 	got := decode[struct {
 		Minutes int             `json:"minutes"`
 		Samples []*store.Sample `json:"samples"`
+		Summary *store.Summary  `json:"summary"`
 	}](t, w)
 	if got.Minutes != 15 {
 		t.Errorf("minutes = %d, want 15", got.Minutes)
 	}
 	if got.Samples == nil {
 		t.Error("samples = null, want an empty array so the UI can map over it")
+	}
+	if got.Summary == nil || got.Summary.Samples != 0 {
+		t.Errorf("summary = %+v, want an empty one rather than null", got.Summary)
+	}
+}
+
+// The day's ranges are meant to outlive the sample window the caller asks for:
+// an hour of samples cannot say what is normal for the machine.
+func TestHostMetricsSummarySpansTheDay(t *testing.T) {
+	s, h := testServer(t, "")
+	do(t, h, "POST", "/api/hosts", `{"name":"pi","address":"pi.local","username":"u"}`)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for _, sample := range []*store.Sample{
+		{HostID: 1, TakenAt: now.Add(-6 * time.Hour), CPUPct: 8, MemUsed: 1000, MemTotal: 4000},
+		{HostID: 1, TakenAt: now, CPUPct: 48, MemUsed: 3000, MemTotal: 4000},
+	} {
+		if err := s.DB.InsertSample(ctx, sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := do(t, h, "GET", "/api/hosts/1/metrics?minutes=15", "")
+	got := decode[struct {
+		Samples []*store.Sample `json:"samples"`
+		Summary *store.Summary  `json:"summary"`
+	}](t, w)
+	if len(got.Samples) != 1 {
+		t.Fatalf("samples in the last 15 min = %d, want 1", len(got.Samples))
+	}
+	if got.Summary.Samples != 2 {
+		t.Fatalf("summary samples = %d, want both of the day's", got.Summary.Samples)
+	}
+	if got.Summary.CPUPct.Min != 8 || got.Summary.CPUPct.Max != 48 || got.Summary.CPUPct.Avg != 28 {
+		t.Errorf("cpu summary = %+v, want 8/48/28", got.Summary.CPUPct)
+	}
+	if got.Summary.MemPct.Min != 25 || got.Summary.MemPct.Max != 75 {
+		t.Errorf("memory summary = %+v, want 25–75%%", got.Summary.MemPct)
 	}
 }
 
