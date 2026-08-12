@@ -116,6 +116,45 @@ func TestInstallationResponsesCarryURL(t *testing.T) {
 	}
 }
 
+// The version an app is running is worked out from the parameters it was
+// deployed with, so like its ports it has to be recomputed on every response
+// that carries an installation.
+func TestInstallationResponsesCarryVersion(t *testing.T) {
+	s, h := testServer(t, "")
+	in := installed(t, s, &store.App{
+		Name:           "photos",
+		InstallCommand: "install --ref {{ref}} --port {{port}}",
+		Params: []store.Param{
+			{Name: "ref", Label: "Version", Default: "v1.4.0"},
+			{Name: "port", Label: "Port", Default: "8787"},
+		},
+		HealthType:   store.HealthHTTP,
+		HealthTarget: "http://{{host}}:{{port}}/healthz",
+	})
+
+	want := "v1.4.0"
+	list := decode[[]store.Installation](t, do(t, h, "GET", "/api/installations", ""))
+	if len(list) != 1 {
+		t.Fatalf("installations = %d, want 1", len(list))
+	}
+	if list[0].Version != want {
+		t.Errorf("list version = %q, want %q", list[0].Version, want)
+	}
+
+	one := decode[store.Installation](t, do(t, h, "GET", fmt.Sprintf("/api/installations/%d", in.ID), ""))
+	if one.Version != want {
+		t.Errorf("installation version = %q, want %q", one.Version, want)
+	}
+
+	ov := decode[overview](t, do(t, h, "GET", "/api/overview", ""))
+	if len(ov.Installations) != 1 {
+		t.Fatalf("overview installations = %d, want 1", len(ov.Installations))
+	}
+	if ov.Installations[0].Version != want {
+		t.Errorf("overview version = %q, want %q", ov.Installations[0].Version, want)
+	}
+}
+
 // An app that says nothing about ports must not have one invented for it.
 func TestInstallationWithoutPortsSaysNothing(t *testing.T) {
 	s, h := testServer(t, "")
@@ -137,11 +176,17 @@ func TestInstallationWithoutPortsSaysNothing(t *testing.T) {
 	if list[0].URL != "" {
 		t.Errorf("url = %q, want none", list[0].URL)
 	}
+	if list[0].Version != "" {
+		t.Errorf("version = %q, want none", list[0].Version)
+	}
 	// The fields stay off the wire entirely rather than going out empty.
 	if strings.Contains(w.Body.String(), `"ports"`) {
 		t.Errorf("response names ports for an app that has none: %s", w.Body)
 	}
 	if strings.Contains(w.Body.String(), `"url"`) {
 		t.Errorf("response names a url for an app Deployer cannot place: %s", w.Body)
+	}
+	if strings.Contains(w.Body.String(), `"version"`) {
+		t.Errorf("response names a version for an app that pins none: %s", w.Body)
 	}
 }

@@ -404,6 +404,9 @@ export interface Installation {
   /** Ports the app answers on, worked out from its health check and its
    *  parameters. Absent when neither of them says. */
   ports?: number[]
+  /** The version deployed here, worked out from the parameters that named it.
+   *  Absent for an app whose command installs whatever is current. */
+  version?: string
   /** Where to open the app in a browser, from the same two sources. Absent
    *  when neither of them says enough to name an address. */
   url?: string

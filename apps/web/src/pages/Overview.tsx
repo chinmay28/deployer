@@ -51,6 +51,7 @@ export default function Overview() {
                     <div className="sub">
                       {parts(
                         `on ${install.hostName}`,
+                        install.version,
                         ports(install.ports),
                         `updated ${ago(install.updatedAt)}`,
                       )}

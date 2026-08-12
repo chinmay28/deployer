@@ -215,6 +215,11 @@ type Installation struct {
 	// URL is where to open the app in a browser, from the same two sources and
 	// on the same terms: empty when neither says. See deploy.InstallationURL.
 	URL string `json:"url,omitempty"`
+
+	// Version is the version last deployed here, read off the parameters that
+	// named it. Empty for an app whose command installs whatever is current.
+	// See deploy.InstallationVersion.
+	Version string `json:"version,omitempty"`
 }
 
 const installationColumns = `i.id, i.app_id, i.host_id, i.params, i.last_deployment_id,
