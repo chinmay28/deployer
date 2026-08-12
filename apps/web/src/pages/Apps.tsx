@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { LaunchButton } from '../components/launch'
 import { TabPage } from '../components/Layout'
 import { HealthBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
@@ -37,7 +38,10 @@ export default function Apps() {
                 <div className="title">{app.name}</div>
                 <div className="sub">{app.description || 'No description'}</div>
               </div>
-              {deployed.length > 0 && <HealthBadge status={deployed[0].healthStatus} />}
+              <div className="row" style={{ gap: 6 }}>
+                <LaunchButton installations={deployed} />
+                {deployed.length > 0 && <HealthBadge status={deployed[0].healthStatus} />}
+              </div>
             </div>
             <div className="sub" style={{ marginTop: 8 }}>
               {deployed.length === 0

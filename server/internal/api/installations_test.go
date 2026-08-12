@@ -80,6 +80,42 @@ func TestInstallationResponsesCarryPorts(t *testing.T) {
 	}
 }
 
+// The link that opens an app is worked out the same way its ports are, so it
+// has to appear in the same three places — the tab, the app's page and the
+// dashboard all offer the button.
+func TestInstallationResponsesCarryURL(t *testing.T) {
+	s, h := testServer(t, "")
+	in := installed(t, s, &store.App{
+		Name:           "photos",
+		InstallCommand: "install --port {{port}}",
+		Params:         []store.Param{{Name: "port", Label: "Port", Default: "8787"}},
+		HealthType:     store.HealthHTTP,
+		HealthTarget:   "http://{{host}}:{{port}}/healthz",
+	})
+
+	want := "http://nakedpi.local:8787/"
+	list := decode[[]store.Installation](t, do(t, h, "GET", "/api/installations", ""))
+	if len(list) != 1 {
+		t.Fatalf("installations = %d, want 1", len(list))
+	}
+	if list[0].URL != want {
+		t.Errorf("list url = %q, want %q", list[0].URL, want)
+	}
+
+	one := decode[store.Installation](t, do(t, h, "GET", fmt.Sprintf("/api/installations/%d", in.ID), ""))
+	if one.URL != want {
+		t.Errorf("installation url = %q, want %q", one.URL, want)
+	}
+
+	ov := decode[overview](t, do(t, h, "GET", "/api/overview", ""))
+	if len(ov.Installations) != 1 {
+		t.Fatalf("overview installations = %d, want 1", len(ov.Installations))
+	}
+	if ov.Installations[0].URL != want {
+		t.Errorf("overview url = %q, want %q", ov.Installations[0].URL, want)
+	}
+}
+
 // An app that says nothing about ports must not have one invented for it.
 func TestInstallationWithoutPortsSaysNothing(t *testing.T) {
 	s, h := testServer(t, "")
@@ -98,8 +134,14 @@ func TestInstallationWithoutPortsSaysNothing(t *testing.T) {
 	if len(list[0].Ports) != 0 {
 		t.Errorf("ports = %v, want none", list[0].Ports)
 	}
-	// The field stays off the wire entirely rather than going out empty.
+	if list[0].URL != "" {
+		t.Errorf("url = %q, want none", list[0].URL)
+	}
+	// The fields stay off the wire entirely rather than going out empty.
 	if strings.Contains(w.Body.String(), `"ports"`) {
 		t.Errorf("response names ports for an app that has none: %s", w.Body)
+	}
+	if strings.Contains(w.Body.String(), `"url"`) {
+		t.Errorf("response names a url for an app Deployer cannot place: %s", w.Body)
 	}
 }

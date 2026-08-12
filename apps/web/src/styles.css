@@ -750,6 +750,34 @@ button.block {
   }
 }
 
+/* ---------- open on which host ---------- */
+
+/* The choices in the sheet an app deployed to several hosts offers: one
+   full-width row each, naming the host over the address it will open. */
+.pick-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.pick-list button {
+  width: 100%;
+  text-align: left;
+}
+
+.pick-list .title,
+.pick-list .sub {
+  display: block;
+}
+
+.pick-list .sub {
+  font-weight: 400;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- logs ---------- */
 
 .log {

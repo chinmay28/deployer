@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
+import { LaunchButton } from '../components/launch'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HealthBadge } from '../components/status'
 import { Banner, Card, Empty, Field, Loading, SectionTitle, Sheet, useLoader } from '../components/ui'
@@ -86,6 +87,9 @@ export default function AppDetail() {
               <button className="primary" onClick={() => setDeployTarget('new')}>
                 Deploy
               </button>
+              {/* Where the app is running somewhere, opening it is the thing
+                  most often wanted from this page. */}
+              <LaunchButton installations={mine} className="secondary" label="Open app" />
             </div>
           </Card>
 
@@ -106,7 +110,10 @@ export default function AppDetail() {
                       )}
                     </div>
                   </div>
-                  <HealthBadge status={installation.healthStatus} />
+                  <div className="row" style={{ gap: 6 }}>
+                    <LaunchButton installations={[installation]} />
+                    <HealthBadge status={installation.healthStatus} />
+                  </div>
                 </div>
                 {installation.healthDetail && (
                   <div className="sub" style={{ marginTop: 8 }}>
