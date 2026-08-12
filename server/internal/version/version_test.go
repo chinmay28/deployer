@@ -13,7 +13,7 @@ func TestStringIsUnstampedByDefault(t *testing.T) {
 	if Patch != "0" {
 		t.Fatalf("Patch = %q, want the unstamped default", Patch)
 	}
-	if got, want := String(), "v0.1.0"; got != want {
+	if got, want := String(), "v1.0.0"; got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	if Stamped() {
@@ -24,7 +24,7 @@ func TestStringIsUnstampedByDefault(t *testing.T) {
 func TestStringUsesTheStampedPatch(t *testing.T) {
 	t.Cleanup(func() { Patch = "0" })
 	Patch = "42"
-	if got, want := String(), "v0.1.42"; got != want {
+	if got, want := String(), "v1.0.42"; got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	if !Stamped() {
