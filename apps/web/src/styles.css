@@ -18,6 +18,10 @@
   --bad: #c0362c;
   --bad-soft: #fceceb;
   --shadow: 0 1px 2px rgba(16, 16, 32, 0.06), 0 8px 24px rgba(16, 16, 32, 0.04);
+  /* What a pressed button is washed with. Ink on a light ground, light on a
+     dark one — brightness alone barely shows on a surface that is already
+     nearly black. */
+  --press-tint: rgba(16, 16, 32, 0.1);
   --radius: 16px;
   --tap: 44px;
   color-scheme: light;
@@ -40,6 +44,7 @@
     --bad: #f87171;
     --bad-soft: #3a1a19;
     --shadow: none;
+    --press-tint: rgba(255, 255, 255, 0.12);
     color-scheme: dark;
   }
 }
@@ -659,6 +664,26 @@ button {
   color: var(--text);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  /* How far a press pushes the button in. Small buttons override it: the same
+     scale reads as nothing on a chip and as a lurch on a full-width bar. */
+  --press: 0.97;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+/* The line above turns off iOS's own tap flash, which leaves a button with
+   nothing to say for itself while a finger is on it — and an action that then
+   goes to the network, like Check, looks like it ignored the press entirely.
+   The FAB has always drawn its own press; this is every other button doing the
+   same. Cards are excluded: they are surfaces, and a whole card flinching
+   reads as the page moving. */
+button:active:not(:disabled):not(.card) {
+  transform: scale(var(--press));
+  /* An inset shadow rather than a background of its own: it washes over
+     whatever colour the variant already has — grey, accent or red — so one
+     rule presses every button. */
+  box-shadow: inset 0 0 0 999px var(--press-tint);
 }
 
 button:disabled {
@@ -772,9 +797,9 @@ button.block {
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
-  transition:
-    transform 0.12s ease,
-    filter 0.12s ease;
+  /* A pill this small needs a deeper push than a full-width button to read as
+     pressed at all. */
+  --press: 0.94;
 }
 
 /* A pill the size of a badge is smaller than a thumb. The visible chip stays
@@ -783,11 +808,6 @@ button.block {
   content: '';
   position: absolute;
   inset: calc((var(--tap) - 100%) / -2) -6px;
-}
-
-.open-chip:active {
-  transform: scale(0.94);
-  filter: brightness(0.96);
 }
 
 .launch-icon {
