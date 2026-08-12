@@ -3,7 +3,7 @@ import { api } from '../api'
 import { TabPage } from '../components/Layout'
 import { HealthBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
-import { ago } from '../lib/format'
+import { ago, parts, ports } from '../lib/format'
 
 export default function Apps() {
   const { data, error, loading, offline } = useLoader(() => api.apps(), [], 15000)
@@ -27,6 +27,9 @@ export default function Apps() {
 
       {data?.map((app) => {
         const deployed = installs?.filter((i) => i.appId === app.id) ?? []
+        // Across hosts an app is normally on the same port, so one list of
+        // ports describes all of them.
+        const listening = [...new Set(deployed.flatMap((i) => i.ports ?? []))].sort((a, b) => a - b)
         return (
           <Link key={app.id} className="card" to={`/apps/${app.id}`}>
             <div className="row between">
@@ -40,8 +43,12 @@ export default function Apps() {
               {deployed.length === 0
                 ? 'Not deployed anywhere yet'
                 : deployed.length === 1
-                  ? `On ${deployed[0].hostName} · updated ${ago(deployed[0].updatedAt)}`
-                  : `On ${deployed.length} hosts`}
+                  ? parts(
+                      `On ${deployed[0].hostName}`,
+                      ports(listening),
+                      `updated ${ago(deployed[0].updatedAt)}`,
+                    )
+                  : parts(`On ${deployed.length} hosts`, ports(listening))}
             </div>
           </Link>
         )

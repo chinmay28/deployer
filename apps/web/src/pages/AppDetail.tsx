@@ -4,7 +4,7 @@ import { api } from '../api'
 import { Page } from '../components/Layout'
 import { DeploymentBadge, HealthBadge } from '../components/status'
 import { Banner, Card, Empty, Field, Loading, SectionTitle, Sheet, useLoader } from '../components/ui'
-import { ago, shellQuote, time } from '../lib/format'
+import { ago, parts, ports, shellQuote, time } from '../lib/format'
 import type { App, Host, Installation } from '../types'
 
 export default function AppDetail() {
@@ -99,7 +99,11 @@ export default function AppDetail() {
                   <div className="grow">
                     <div className="title">{installation.hostName}</div>
                     <div className="sub">
-                      {installation.hostAddress} · updated {ago(installation.updatedAt)}
+                      {parts(
+                        installation.hostAddress,
+                        ports(installation.ports),
+                        `updated ${ago(installation.updatedAt)}`,
+                      )}
                     </div>
                   </div>
                   <HealthBadge status={installation.healthStatus} />

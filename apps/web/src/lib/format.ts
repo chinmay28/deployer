@@ -74,6 +74,19 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
+/** "port 8899", or "ports 8080, 8443" — and nothing at all when Deployer has
+ *  no port to name, which reads better than an empty label. */
+export function ports(list: number[] | undefined): string {
+  if (!list || list.length === 0) return ''
+  return `${list.length === 1 ? 'port' : 'ports'} ${list.join(', ')}`
+}
+
+/** parts joins the pieces of a card's subtitle, dropping the ones that had
+ *  nothing to say. */
+export function parts(...pieces: (string | false | null | undefined)[]): string {
+  return pieces.filter(Boolean).join(' · ')
+}
+
 /** Nobody calls it "photos.service" out loud, so a systemd unit is shown by
  *  the part of its name that means something. */
 export function serviceName(unit: string): string {

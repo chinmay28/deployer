@@ -145,6 +145,13 @@ or a systemd unit (`countroster.service`) — which is what turns "the script ra
 into "the app is actually running". It runs after each deploy and every minute
 after that.
 
+Between the health check URL and a parameter called `port`, an app has usually
+already said which **ports** it answers on, so Deployer reads them back out and
+shows them wherever the app is listed: `on nakedpi · port 8787 · updated 3 min
+ago`. Knowing an app is healthy is only half of knowing where to open it.
+Nothing is scanned and nothing is guessed — an app that declares neither shows
+no port at all.
+
 ## Deploying
 
 Deploy picks a host, shows the parameters, and shows the exact command that will

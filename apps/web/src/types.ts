@@ -401,6 +401,9 @@ export interface Installation {
   healthType: HealthType
   healthTarget: string
   lastStatus: DeploymentStatus | ''
+  /** Ports the app answers on, worked out from its health check and its
+   *  parameters. Absent when neither of them says. */
+  ports?: number[]
 }
 
 export interface Overview {
