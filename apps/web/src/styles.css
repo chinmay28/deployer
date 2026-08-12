@@ -750,6 +750,66 @@ button.block {
   }
 }
 
+/* ---------- opening an app ---------- */
+
+/* Open sits beside a status badge on a card, so it is shaped like one — a pill
+   in the accent colour — rather than like the page's full-width buttons. The
+   badge next to it reports; this one acts, which is what the icon and the
+   filled ground say at a glance. */
+.open-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  min-height: 0;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease;
+}
+
+/* A pill the size of a badge is smaller than a thumb. The visible chip stays
+   compact next to the badge; the thing you actually hit is the full 44px. */
+.open-chip::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--tap) - 100%) / -2) -6px;
+}
+
+.open-chip:active {
+  transform: scale(0.94);
+  filter: brightness(0.96);
+}
+
+.launch-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* In the actions row on an app's page the chip gives way to a full-width
+   button, which the icon joins rather than shrinks. */
+.actions button:has(.launch-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.actions .launch-icon {
+  width: 17px;
+  height: 17px;
+}
+
 /* ---------- open on which host ---------- */
 
 /* The choices in the sheet an app deployed to several hosts offers: one
@@ -762,12 +822,22 @@ button.block {
 
 .pick-list button {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-align: left;
 }
 
+.pick-list .grow,
 .pick-list .title,
 .pick-list .sub {
   display: block;
+}
+
+.pick-list .launch-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--accent);
 }
 
 .pick-list .sub {
