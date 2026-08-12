@@ -5,8 +5,19 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
+
+// withPorts fills in the ports each installation answers on. The database has
+// no column for them — they are read back out of the health check and the
+// parameters — so every response that carries installations goes through here.
+func withPorts(list []*store.Installation) []*store.Installation {
+	for _, in := range list {
+		in.Ports = deploy.InstallationPorts(in)
+	}
+	return list
+}
 
 func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request) {
 	list, err := s.DB.ListInstallations(r.Context())
@@ -14,7 +25,7 @@ func (s *Server) handleListInstallations(w http.ResponseWriter, r *http.Request)
 		s.writeStoreError(w, err, "list installations")
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, withPorts(list))
 }
 
 func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +34,7 @@ func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "get installation")
 		return
 	}
+	in.Ports = deploy.InstallationPorts(in)
 	writeJSON(w, http.StatusOK, in)
 }
 
@@ -112,7 +124,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hostList {
 		views = append(views, hostView{Host: h, Latest: latest[h.ID]})
 	}
-	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: installs, Recent: recent})
+	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: withPorts(installs), Recent: recent})
 }
 
 func (s *Server) installationFromPath(r *http.Request) (*store.Installation, error) {

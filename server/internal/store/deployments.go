@@ -206,6 +206,11 @@ type Installation struct {
 	HealthType   string `json:"healthType,omitempty"`
 	HealthTarget string `json:"healthTarget,omitempty"`
 	LastStatus   string `json:"lastStatus,omitempty"`
+
+	// Ports the app answers on, worked out from the health check and the
+	// parameters rather than stored. Filled in on the way out; see
+	// deploy.InstallationPorts.
+	Ports []int `json:"ports,omitempty"`
 }
 
 const installationColumns = `i.id, i.app_id, i.host_id, i.params, i.last_deployment_id,

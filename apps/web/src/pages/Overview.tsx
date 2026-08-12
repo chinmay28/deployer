@@ -3,7 +3,7 @@ import { api } from '../api'
 import { TabPage } from '../components/Layout'
 import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
-import { ago, bytes, percent, time } from '../lib/format'
+import { ago, bytes, parts, percent, ports, time } from '../lib/format'
 import type { Host } from '../types'
 
 /** The dashboard: everything in one request, refreshed while it is open. */
@@ -48,7 +48,11 @@ export default function Overview() {
                   <div className="grow">
                     <div className="title">{install.appName}</div>
                     <div className="sub">
-                      on {install.hostName} · updated {ago(install.updatedAt)}
+                      {parts(
+                        `on ${install.hostName}`,
+                        ports(install.ports),
+                        `updated ${ago(install.updatedAt)}`,
+                      )}
                     </div>
                   </div>
                   <HealthBadge status={install.healthStatus} />
