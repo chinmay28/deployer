@@ -26,7 +26,7 @@ func InstallationURL(in *store.Installation) string {
 	// An HTTP health check is the better source: it is a URL somebody wrote
 	// down, scheme and all, and it is known to answer.
 	if in.HealthType == store.HealthHTTP {
-		if target, err := Render(in.HealthTarget, healthValues(in), false); err == nil {
+		if target, err := RenderTarget(in.HealthTarget, healthValues(in), false); err == nil {
 			if origin := browsableOrigin(target); origin != "" {
 				return origin
 			}
