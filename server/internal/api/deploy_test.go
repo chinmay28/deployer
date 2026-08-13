@@ -61,6 +61,11 @@ func TestCreateAppValidation(t *testing.T) {
 			`{"name":"x","installCommand":"true","healthType":"systemd"}`,
 			"needs a unit name",
 		},
+		{
+			"health url naming something the app never declared",
+			`{"name":"x","installCommand":"true","healthType":"http","healthTarget":"http://{HOST}:{PORT}/"}`,
+			"unknown placeholder",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -140,10 +140,23 @@ Install commands run with `pipefail`, so a failing `curl` in
 exit status, and with `DEBIAN_FRONTEND=noninteractive` so package managers don't
 stop to ask questions.
 
-An app can also declare a **health check** — an HTTP URL (`http://{{host}}:8787/`)
+An app can also declare a **health check** — an HTTP URL (`http://{HOST}:8787/`)
 or a systemd unit (`countroster.service`) — which is what turns "the script ran"
 into "the app is actually running". It runs after each deploy and every minute
 after that.
+
+One health check covers every host the app is deployed to, so it is written
+against the host rather than a machine: `{HOST}` becomes whichever machine is
+being checked. A health check takes a single pair of braces in any case —
+`{HOST}`, `{host}`, `{PORT}` — which is a great deal easier to type on a phone
+than `{{host}}`, though that still works. Install commands keep to `{{name}}`
+only, because `awk '{print}'` is an ordinary thing to write in a shell command
+and substituting into it would be a bug.
+
+`{HOST}` fills in the host's address, and it also fills in sensibly when the URL
+writes part of the name itself: `http://{HOST}.local:8123/` reaches `pi5.local`
+whether Deployer knows that host as `pi5` or as `pi5.local`, rather than asking
+for `pi5.local.local`.
 
 Between the health check URL and a parameter called `port`, an app has usually
 already said which **ports** it answers on, so Deployer reads them back out and

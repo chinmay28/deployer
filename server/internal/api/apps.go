@@ -63,7 +63,7 @@ func (in *appInput) normalize() string {
 		in.HealthTarget = ""
 	case store.HealthHTTP:
 		if in.HealthTarget == "" {
-			return "an HTTP health check needs a URL, for example: http://{{host}}:8787/"
+			return "an HTTP health check needs a URL, for example: http://{HOST}:8787/"
 		}
 		if !strings.HasPrefix(in.HealthTarget, "http://") && !strings.HasPrefix(in.HealthTarget, "https://") {
 			return "the health check URL must start with http:// or https://"
@@ -88,7 +88,7 @@ func (in *appInput) normalize() string {
 		return "install command has " + err.Error() + " — declare it as a parameter first"
 	}
 	if in.HealthTarget != "" {
-		if _, err := deploy.Render(in.HealthTarget, values, false); err != nil {
+		if _, err := deploy.RenderTarget(in.HealthTarget, values, false); err != nil {
 			return "health check target has " + err.Error()
 		}
 	}

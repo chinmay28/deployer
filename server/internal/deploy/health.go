@@ -190,7 +190,7 @@ func (c *Checker) check(ctx context.Context, in *store.Installation, host *store
 }
 
 func (c *Checker) checkHTTP(ctx context.Context, target string, values map[string]string) (string, string) {
-	url, err := Render(target, values, false)
+	url, err := RenderTarget(target, values, false)
 	if err != nil {
 		return store.HealthUnknown, err.Error()
 	}
@@ -212,7 +212,7 @@ func (c *Checker) checkHTTP(ctx context.Context, target string, values map[strin
 }
 
 func (c *Checker) checkSystemd(ctx context.Context, host *store.Host, target string, values map[string]string) (string, string) {
-	unit, err := Render(target, values, true)
+	unit, err := RenderTarget(target, values, true)
 	if err != nil {
 		return store.HealthUnknown, err.Error()
 	}

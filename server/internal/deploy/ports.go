@@ -46,7 +46,7 @@ func InstallationPorts(in *store.Installation) []int {
 	if in.HealthType == store.HealthHTTP {
 		// A target that still has placeholders in it after this — {{user}},
 		// say — renders to nothing usable, and no port is claimed for it.
-		if target, err := Render(in.HealthTarget, healthValues(in), false); err == nil {
+		if target, err := RenderTarget(in.HealthTarget, healthValues(in), false); err == nil {
 			if p, ok := urlPort(target); ok {
 				add(p)
 			}

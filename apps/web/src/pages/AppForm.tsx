@@ -163,11 +163,14 @@ export default function AppForm() {
               </select>
             </Field>
             {healthType === 'http' && (
-              <Field label="URL" help="Checked from Deployer. Placeholders work here too.">
+              <Field
+                label="URL"
+                help="Checked from Deployer, once per host. Write {HOST} for the machine it's deployed on — {HOST}.local is fine either way — and {PORT} for a parameter."
+              >
                 <input
                   value={healthTarget}
                   onChange={(e) => setHealthTarget(e.target.value)}
-                  placeholder="http://{{host}}:8787/"
+                  placeholder="http://{HOST}:8787/"
                   autoCapitalize="none"
                   autoCorrect="off"
                   inputMode="url"
@@ -175,7 +178,7 @@ export default function AppForm() {
               </Field>
             )}
             {healthType === 'systemd' && (
-              <Field label="Unit" help="Checked with systemctl is-active over SSH.">
+              <Field label="Unit" help="Checked with systemctl is-active over SSH. {HOST} and parameters work here too.">
                 <input
                   value={healthTarget}
                   onChange={(e) => setHealthTarget(e.target.value)}

@@ -48,6 +48,16 @@ func TestInstallationURL(t *testing.T) {
 		},
 		want: "https://photos.example.com/",
 	}, {
+		// One health check, written once, and each host's card links to that
+		// host.
+		name: "a host-based check URL, one pair of braces",
+		in: store.Installation{
+			HealthType:   store.HealthHTTP,
+			HealthTarget: "http://{HOST}.local:8123/",
+			HostAddress:  "nakedpi.local",
+		},
+		want: "http://nakedpi.local:8123/",
+	}, {
 		// No URL was ever written down, but the port parameter still says where
 		// the app listens.
 		name: "systemd check with a port parameter",

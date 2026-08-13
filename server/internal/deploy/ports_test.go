@@ -21,6 +21,14 @@ func TestInstallationPorts(t *testing.T) {
 		},
 		want: []int{8899},
 	}, {
+		name: "port written into a host-based check URL",
+		in: store.Installation{
+			HealthType:   store.HealthHTTP,
+			HealthTarget: "http://{HOST}.local:8123/",
+			HostAddress:  "pi5.local",
+		},
+		want: []int{8123},
+	}, {
 		name: "port supplied as a parameter and used by the check",
 		in: store.Installation{
 			HealthType:   store.HealthHTTP,
