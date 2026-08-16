@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chinmay28/deployer/server/internal/metrics"
 	"github.com/chinmay28/deployer/server/internal/selfhost"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
@@ -86,6 +87,36 @@ func TestProbeAgainstRealHost(t *testing.T) {
 		if d.TotalBytes <= 0 || d.UsedBytes > d.TotalBytes {
 			t.Errorf("implausible disk %+v", d)
 		}
+	}
+
+	// The same round trip walks /proc, so a live kernel always has processes to
+	// report — the probe's own shell among them — and every figure must be
+	// one the UI can show.
+	if probe.Processes == nil {
+		t.Fatal("no process snapshot from a live host")
+	}
+	if len(probe.Processes.TopMem) == 0 {
+		t.Error("not one process reported resident memory")
+	}
+	for _, p := range append(append([]metrics.Process{}, probe.Processes.TopCPU...), probe.Processes.TopMem...) {
+		if p.PID <= 0 || p.Name == "" {
+			t.Errorf("unnamed process %+v", p)
+		}
+		if p.CPUPct < 0 || p.CPUPct > 100 || p.MemPct < 0 || p.MemPct > 100 {
+			t.Errorf("process out of range: %+v", p)
+		}
+		if p.MemBytes > probe.Sample.MemTotal {
+			t.Errorf("%s holds %d bytes of %d in the machine", p.Name, p.MemBytes, probe.Sample.MemTotal)
+		}
+	}
+	// A snapshot is kept in memory rather than in the database, which is where
+	// the metrics endpoint reads it from.
+	if svc.Processes(h.ID) == nil {
+		t.Error("the snapshot was not remembered for the host")
+	}
+	svc.Forget(h.ID)
+	if svc.Processes(h.ID) != nil {
+		t.Error("a removed host kept its snapshot")
 	}
 
 	// The probe result must land in the database.

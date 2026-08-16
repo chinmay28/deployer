@@ -17,7 +17,7 @@ import {
   useLoader,
 } from '../components/ui'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
-import type { HostTestResult, Stat } from '../types'
+import type { HostProcess, HostTestResult, Stat } from '../types'
 
 export default function HostDetail() {
   const { id } = useParams()
@@ -82,6 +82,7 @@ export default function HostDetail() {
   const sample = host?.latest
   const cpuHistory = metrics?.samples.map((s) => s.cpuPct) ?? []
   const summary = metrics?.summary
+  const processes = metrics?.processes
 
   return (
     <Page
@@ -227,6 +228,64 @@ export default function HostDetail() {
                 {sample.tempC != null && <span>{sample.tempC.toFixed(1)} °C</span>}
               </div>
             </Card>
+          )}
+
+          {/* The meters above say whether the machine is busy. This says what
+              it is busy with, which is the next question and until now needed
+              a terminal. A host that is up but has not been probed since
+              Deployer started is seconds from having an answer; one that is
+              down is not, so it is not left waiting for something. */}
+          {sample && (processes || host.status === 'online') && (
+            <>
+              <SectionTitle>What's using it</SectionTitle>
+              <Card>
+                {!processes ? (
+                  <div className="sub">Waiting for the next reading…</div>
+                ) : (
+                  <>
+                    <div className="meter-label">
+                      <span>Most CPU</span>
+                      <b>{ago(processes.takenAt)}</b>
+                    </div>
+                    {processes.topCpu.length === 0 ? (
+                      <div className="sub" style={{ marginBottom: 10 }}>
+                        Nothing was using the CPU in that second.
+                      </div>
+                    ) : (
+                      processes.topCpu.map((proc) => (
+                        <ProcessRow
+                          key={`cpu-${proc.pid}`}
+                          proc={proc}
+                          value={proc.cpuPct}
+                          display={share(proc.cpuPct)}
+                        />
+                      ))
+                    )}
+                    {/* A process's figure is its share of the whole machine, so
+                        it can be read against the CPU meter above rather than
+                        against one core, which is what top would show. */}
+                    <div className="sub" style={{ fontSize: 11 }}>
+                      Measured over the same second as the reading above, as a share of the whole
+                      machine.
+                    </div>
+
+                    <div className="list-divider" />
+                    <div className="meter-label">
+                      <span>Most memory</span>
+                      <b>{bytes(sample.memTotal)} in all</b>
+                    </div>
+                    {processes.topMem.map((proc) => (
+                      <ProcessRow
+                        key={`mem-${proc.pid}`}
+                        proc={proc}
+                        value={proc.memPct}
+                        display={bytes(proc.memBytes)}
+                      />
+                    ))}
+                  </>
+                )}
+              </Card>
+            </>
           )}
 
           <SectionTitle>Details</SectionTitle>
@@ -459,7 +518,43 @@ function Range({ label, stat, detail }: { label: string; stat: Stat; detail?: st
   )
 }
 
+/** ProcessRow is one process in a top-five list: what it is, and how much of
+ *  the resource in question it is holding. */
+function ProcessRow({
+  proc,
+  value,
+  display,
+}: {
+  proc: HostProcess
+  value: number
+  display: string
+}) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <Meter
+        label={
+          <span>
+            {proc.name} <span className="pid">{proc.pid}</span>
+          </span>
+        }
+        value={value}
+        display={display}
+      />
+    </div>
+  )
+}
+
 const pct = (n: number) => `${Math.round(n)}%`
+
+/** share keeps a decimal only where rounding would erase the figure: 0.4% is
+ *  worth saying, 41.2% is not worth reading, and a process too small to write
+ *  in a tenth of a percent on a machine with many cores says so rather than
+ *  claiming to be idle. */
+function share(n: number): string {
+  if (n >= 10) return `${Math.round(n)}%`
+  if (n >= 0.1) return `${n.toFixed(1)}%`
+  return '<0.1%'
+}
 
 /** span writes a low and a high as one figure where they read the same, so a
  *  machine that has not moved says "12%" rather than "12–12%". */

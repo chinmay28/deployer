@@ -15,8 +15,20 @@ import (
 
 // probeScript writes marker-delimited sections so one round trip yields
 // everything. It reads /proc/stat twice a second apart so CPU usage is a real
-// interval average rather than an average since boot.
+// interval average rather than an average since boot, and walks /proc at both
+// ends of that same second so every process gets its usage measured over the
+// interval too — see processes.go.
 const probeScript = `
+walk='{
+  o = index($0, "(")
+  c = 0
+  for (i = o + 16; i > o; i--) if (substr($0, i, 1) == ")") { c = i; break }
+  if (c == 0) next
+  n = split(substr($0, c + 2), f, " ")
+  if (n < 22) next
+  split(FILENAME, path, "/")
+  print path[3], f[12] + f[13], f[22], substr($0, o + 1, c - o - 1)
+}'
 printf '@@facts\n'
 hostname 2>/dev/null || echo unknown
 uname -r 2>/dev/null || echo unknown
@@ -26,8 +38,12 @@ printf '@@sudo\n'
 if sudo -n true 2>/dev/null; then echo yes; else echo no; fi
 printf '@@machineid\n'
 cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || true
+printf '@@pagesize\n'
+getconf PAGESIZE 2>/dev/null || echo 4096
 printf '@@cpu1\n'
 grep '^cpu ' /proc/stat
+printf '@@proc1\n'
+awk "$walk" /proc/[0-9]*/stat 2>/dev/null
 printf '@@uptime\n'
 cat /proc/uptime
 printf '@@loadavg\n'
@@ -43,12 +59,18 @@ done
 sleep 1
 printf '@@cpu2\n'
 grep '^cpu ' /proc/stat
+printf '@@proc2\n'
+awk "$walk" /proc/[0-9]*/stat 2>/dev/null
 `
 
 // Probe is one full read of a host.
 type Probe struct {
 	Facts  store.HostFacts
 	Sample store.Sample
+	// Processes is what the machine was busy with during the sample's second.
+	// It is nil where the host would not say — an older or stripped-down
+	// userland without awk, which costs the caller the list and nothing else.
+	Processes *Processes
 }
 
 // Collect runs the probe script over an existing connection and parses it.
@@ -84,8 +106,16 @@ func parseProbe(out string) (*Probe, error) {
 		p.Facts.MachineID = strings.TrimSpace(id[0])
 	}
 
+	// The jiffies the whole machine spent in the interval are the denominator
+	// for one process's share of it as much as for the host's own figure.
+	var totalDelta int64
 	if cpu1, cpu2 := sections["cpu1"], sections["cpu2"]; len(cpu1) > 0 && len(cpu2) > 0 {
 		p.Sample.CPUPct = cpuUsage(cpu1[0], cpu2[0])
+		t1, _, ok1 := cpuTotals(cpu1[0])
+		t2, _, ok2 := cpuTotals(cpu2[0])
+		if ok1 && ok2 && t2 > t1 {
+			totalDelta = t2 - t1
+		}
 	}
 	if up := sections["uptime"]; len(up) > 0 {
 		if f, err := strconv.ParseFloat(field(up[0], 0), 64); err == nil {
@@ -103,6 +133,12 @@ func parseProbe(out string) (*Probe, error) {
 			p.Sample.TempC = &c
 		}
 	}
+	p.Processes = topConsumers(sections["proc1"], sections["proc2"], usage{
+		cpuDelta: totalDelta,
+		pageSize: pageSize(sections["pagesize"]),
+		memTotal: p.Sample.MemTotal,
+		takenAt:  p.Sample.TakenAt,
+	})
 	return p, nil
 }
 

@@ -353,9 +353,10 @@ are exactly the end of the previous boot, and are read instead.
 ## Monitoring
 
 No agent is installed on the host. Deployer opens an SSH session and reads
-`/proc/stat`, `/proc/meminfo`, `/proc/loadavg`, `df` and the thermal zone in a
-single round trip, sampling `/proc/stat` twice a second apart so CPU usage is a
-real interval average rather than an average since boot.
+`/proc/stat`, `/proc/meminfo`, `/proc/loadavg`, every process's `/proc/*/stat`,
+`df` and the thermal zone in a single round trip, sampling `/proc/stat` twice a
+second apart so CPU usage is a real interval average rather than an average
+since boot.
 
 Hosts are polled every 30s in the background and every 5s while you have a host
 open. Samples are kept for 24 hours.
@@ -368,6 +369,25 @@ mean. That is the whole of the retention window, so it is everything Deployer
 knows about the machine. The arithmetic is done in SQL and only the six numbers
 are sent — a phone polling every few seconds never carries a day of samples to
 work them out.
+
+**"Busy" is only half an answer, so a host also names what is using it**: its
+five biggest consumers of CPU, and its five biggest consumers of memory. The CPU
+figures are earned rather than read. `ps` reports a process's average since it
+started, which on a machine up for a month says nothing about now — a backup
+that pegged a core at 3am still looks like the busiest thing on an idle
+afternoon. So /proc is walked at both ends of the same second the probe already
+sleeps for, and what is reported is the jiffies a process gained in between over
+the jiffies the whole machine gained. That makes each figure a share of the
+machine on the same scale as the CPU meter above it: two processes at 25% on a
+four-core Pi are half of it, not two cores of trouble. A process has to exist at
+both ends of that second to be given a figure, so one that started inside the
+window shows only its memory until the next poll.
+
+The snapshot rides along with the sample — no second SSH session, no `top`
+running anywhere — but it is the only one kept, in memory rather than in the
+database. What is using a machine is a question about now, and a day of process
+lists would cost more rows than the telemetry they sit beside. A restart of
+Deployer forgets them until the next poll, which is seconds away.
 
 ## Security
 
@@ -492,7 +512,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `DELETE` | `/api/hosts/{id}`                   | remove a host and its history        |
 | `POST`   | `/api/hosts/{id}/test`              | check reachability, key auth, sudo   |
 | `POST`   | `/api/hosts/{id}/provision`         | one-time password setup, not stored  |
-| `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440      |
+| `GET`    | `/api/hosts/{id}/metrics`           | samples, `?minutes=` up to 1440, the day's ranges, and the top five consumers of CPU and memory |
 | `POST`   | `/api/hosts/{id}/reboot`            | restart the machine (there is no shutdown) |
 | `GET`    | `/api/hosts/{id}/boot`              | why it last restarted, and the evidence |
 | `POST`   | `/api/hosts/{id}/boot/journal`      | keep the journal across restarts, so the next one is explainable |

@@ -6,6 +6,7 @@ import type {
   DirListing,
   Host,
   HostFile,
+  HostProcesses,
   HostTestResult,
   Installation,
   JournalStorage,
@@ -82,11 +83,17 @@ export const api = {
   provisionHost: (id: number, password: string) =>
     request<ProvisionResult>(`/api/hosts/${id}/provision`, { method: 'POST', ...json({ password }) }),
   /** Samples cover the window asked for; the summary always covers the last 24
-   *  hours, which is everything the server keeps. */
+   *  hours, which is everything the server keeps. The process snapshot comes
+   *  from the newest probe — the same round trip that took the sample, so
+   *  seeing what a host is busy with costs no extra SSH session. */
   hostMetrics: (id: number, minutes = 60) =>
-    request<{ hostId: number; minutes: number; samples: Sample[]; summary: MetricSummary }>(
-      `/api/hosts/${id}/metrics?minutes=${minutes}`,
-    ),
+    request<{
+      hostId: number
+      minutes: number
+      samples: Sample[]
+      summary: MetricSummary
+      processes: HostProcesses | null
+    }>(`/api/hosts/${id}/metrics?minutes=${minutes}`),
   /** Restart the machine. It goes down a few seconds after this returns.
    *  There is no shutdown: Deployer cannot turn a host back on. */
   reboot: (id: number) =>

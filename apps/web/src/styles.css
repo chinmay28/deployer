@@ -543,6 +543,21 @@ button.card {
 .meter-label b {
   color: var(--text);
   font-weight: 600;
+  white-space: nowrap;
+}
+
+/* A process labels a meter with its name and pid, and some names are long. The
+   name gives way rather than pushing the figure off the row. */
+.meter-label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meter-label .pid {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
 }
 
 .bar {

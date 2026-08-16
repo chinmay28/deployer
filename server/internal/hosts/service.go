@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,12 +25,20 @@ type Service struct {
 	db       *store.DB
 	self     SelfIdentifier
 	identity atomic.Pointer[sshx.Identity]
+
+	// procs holds the newest process snapshot per host. Unlike a sample it is
+	// not written to the database: "what is using this machine" is a question
+	// about now, and keeping a day of answers would cost more rows than the
+	// telemetry they sit beside. The price is that a restart forgets them until
+	// the next poll, which is seconds away.
+	mu    sync.Mutex
+	procs map[int64]*metrics.Processes
 }
 
 // NewService builds a Service around the given identity. self may be nil, in
 // which case no host is ever tagged as the home host.
 func NewService(db *store.DB, id *sshx.Identity, self SelfIdentifier) *Service {
-	s := &Service{db: db, self: self}
+	s := &Service{db: db, self: self, procs: map[int64]*metrics.Processes{}}
 	s.identity.Store(id)
 	return s
 }
@@ -39,6 +48,28 @@ func (s *Service) Identity() *sshx.Identity { return s.identity.Load() }
 
 // SetIdentity swaps in a rotated keypair for subsequent connections.
 func (s *Service) SetIdentity(id *sshx.Identity) { s.identity.Store(id) }
+
+// Processes returns the newest snapshot of what a host is busy with, or nil
+// where none has been taken since Deployer started.
+func (s *Service) Processes(hostID int64) *metrics.Processes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.procs[hostID]
+}
+
+// Forget drops what is remembered about a host in memory. Called when a host is
+// removed, so a later host cannot inherit its snapshot through a reused id.
+func (s *Service) Forget(hostID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.procs, hostID)
+}
+
+func (s *Service) rememberProcesses(hostID int64, p *metrics.Processes) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.procs[hostID] = p
+}
 
 // Connect dials a host, pinning its key on the first successful connection.
 // The caller must Close the returned client.
@@ -89,6 +120,9 @@ func (s *Service) Probe(ctx context.Context, h *store.Host) (*metrics.Probe, err
 	probe.Sample.HostID = h.ID
 	if err := s.db.InsertSample(ctx, &probe.Sample); err != nil {
 		return nil, err
+	}
+	if probe.Processes != nil {
+		s.rememberProcesses(h.ID, probe.Processes)
 	}
 	return probe, nil
 }

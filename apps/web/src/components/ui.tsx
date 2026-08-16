@@ -40,7 +40,8 @@ export function Meter({
   value,
   display,
 }: {
-  label: string
+  /** Usually a word, but a row about one process names it and its pid. */
+  label: ReactNode
   used?: number
   total?: number
   value?: number
