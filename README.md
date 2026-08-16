@@ -240,6 +240,21 @@ toggle for whether it comes back after a reboot, and the tail of its journal at
 returning as soon as the command is sent, so a service that takes half a minute
 to come up takes half a minute to answer.
 
+The memory figure and the PID are the two systemd most often declines to give,
+and a dash where a number belongs reads as Deployer not asking. `MemoryCurrent`
+is `[not set]` unless the unit's cgroup has memory accounting turned on, which
+has been the default only since systemd 238 and still needs the controller
+present on a cgroup v1 host; `MainPID` stays 0 for the life of a `Type=forking`
+service whose `PIDFile=` systemd could not follow. Neither fact is missing — the
+kernel is still counting that cgroup and still has the processes in it — so
+where systemd has no answer Deployer reads the cgroup itself, in either
+hierarchy, and takes the PID from the processes in it. A host that accounts for
+no memory at all leaves adding up what the unit's processes have resident, which
+counts shared pages more than once and is shown as the approximation it is.
+Where there is genuinely nothing to show — a `Type=oneshot` unit that is active
+with nothing running has no process to have a PID — the screen says which of
+those it is rather than leaving a dash to be read as a failure.
+
 A unit with no `[Install]` section has nothing to enable — systemd calls it
 `static`, and it runs only when something else pulls it in. Rather than leave
 that as "started by another unit", the screen asks systemd which one and names

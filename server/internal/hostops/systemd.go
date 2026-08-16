@@ -99,9 +99,18 @@ type Unit struct {
 	NextS   int64 `json:"nextS,omitempty"`
 	LastS   int64 `json:"lastS,omitempty"`
 	MainPID int   `json:"mainPid"`
-	// Memory is what the unit's cgroup is using now; 0 where systemd does not
-	// account for it.
+	// Memory is what the unit's cgroup is using now; 0 where nothing on the
+	// host counts it.
 	Memory int64 `json:"memory"`
+	// MemoryFrom says where that figure came from, because the two sources are
+	// not the same promise. "cgroup" is the kernel's own accounting for the
+	// unit — the number systemd reports when it is accounting, and the same
+	// number read off the cgroup when it is not. "rss" is the resident size of
+	// the unit's processes added up, which is the only answer left on a host
+	// with no memory controller and counts shared pages once per process.
+	// Empty where there is no figure at all. Only the single-unit call fills
+	// it in; a listing does not ask.
+	MemoryFrom string `json:"memoryFrom,omitempty"`
 	// Restarts is how many times systemd has restarted it by itself, which is
 	// the difference between "running" and "flapping".
 	Restarts int `json:"restarts"`
@@ -173,6 +182,32 @@ var startedByOrder = []string{"TriggeredBy", "BoundBy", "RequiredBy", "UpheldBy"
 // would grow every row's output for a question only one screen asks.
 const startedByProps = ` -p TriggeredBy -p BoundBy -p RequiredBy -p UpheldBy -p WantedBy`
 
+// cgroupProps is what a memory figure and a PID need when systemd will not give
+// them: where the unit's cgroup is, so the kernel's own numbers can be read
+// directly, and the last process systemd itself spawned.
+//
+// Those two figures are the ones systemd most often declines. MemoryCurrent is
+// "[not set]" unless the unit's cgroup has memory accounting on, which is the
+// default only from systemd 238 and still needs the controller present on a
+// cgroup v1 host — so a perfectly healthy service reports no memory at all on
+// plenty of machines. MainPID is 0 on a Type=forking unit whose PIDFile=
+// systemd could not follow, and on anything active with nothing running.
+//
+// Neither fact is actually missing. The kernel is still counting the cgroup and
+// still has the processes in it; systemd is only declining to be the one to say
+// so. Like startedByProps this is added to the single-unit call alone: the
+// listing shows neither figure, and asking would grow every row's output.
+const cgroupProps = ` -p ControlGroup -p ExecMainPID`
+
+// cgroupRoot is where the kernel publishes a cgroup's own accounting, and
+// procDir where it publishes a process's. They are arguments rather than script
+// text for the same reason unitDirs is: a test can point the same script at a
+// tree it built.
+var (
+	cgroupRoot = "/sys/fs/cgroup"
+	procDir    = "/proc"
+)
+
 // unitDirs is where an administrator's own unit files live. /usr/lib and /lib
 // are the distribution's, and everything in them is somebody else's business.
 // They are arguments rather than script text so a test can point the same
@@ -239,14 +274,63 @@ func (s *Service) Units(ctx context.Context, h *store.Host) (*UnitList, error) {
 
 // showScript describes one unit, which need not be one of the hand-installed
 // ones — a link from somewhere else in the UI is allowed to land anywhere.
+//
+// After systemd has had its say the script asks the kernel the two questions
+// systemd most often leaves blank, which it can only do here: the answers are
+// files on the host, and there is one SSH session to read them in.
+//
+// The cgroup is looked for in both layouts. Under cgroup v2 the unit's own
+// directory holds everything, so ControlGroup hangs straight off the root;
+// under v1 each controller is its own tree and the same path hangs off
+// /sys/fs/cgroup/memory and /sys/fs/cgroup/systemd. A host with no memory
+// controller at all has neither, and the last resort is adding up what the
+// unit's processes have resident — a different measure, reported as one.
+//
+// /proc/uptime stays where it is. It is the machine's clock rather than any
+// process's, and it is what every age on these screens is measured against.
 const showScript = `set -u
 u=$1
+cgroot=$2
+procdir=$3
 command -v systemctl >/dev/null 2>&1 || { printf 'systemd is not installed on this host\n' >&2; exit 2; }
 printf '@@user\n%s\n' "$(id -un 2>/dev/null || echo unknown)"
 printf '@@uptime\n%s\n' "$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo 0)"
 printf '@@now\n%s\n' "$(date +%s 2>/dev/null || echo 0)"
-printf '@@units\n'
-systemctl show --no-pager ` + showProps + startedByProps + ` -- "$u"
+shown=$(systemctl show --no-pager ` + showProps + startedByProps + cgroupProps + ` -- "$u") || exit 3
+printf '@@units\n%s\n' "$shown"
+
+cg=$(printf '%s\n' "$shown" | sed -n 's/^ControlGroup=//p' | head -n 1)
+pids=
+mem=
+from=
+if [ -n "$cg" ] && [ "$cg" != / ]; then
+  for f in "$cgroot$cg/cgroup.procs" "$cgroot/systemd$cg/cgroup.procs"; do
+    [ -r "$f" ] || continue
+    pids=$(tr '\n' ' ' <"$f")
+    break
+  done
+  for f in "$cgroot$cg/memory.current" "$cgroot/memory$cg/memory.usage_in_bytes"; do
+    [ -r "$f" ] || continue
+    mem=$(head -n 1 "$f" 2>/dev/null) || continue
+    from=cgroup
+    break
+  done
+  if [ -z "$mem" ] && [ -n "$pids" ]; then
+    page=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+    case "$page" in ''|*[!0-9]*) page=4096;; esac
+    total=0
+    for p in $pids; do
+      r=$(cut -d' ' -f2 "$procdir/$p/statm" 2>/dev/null) || continue
+      case "$r" in ''|*[!0-9]*) continue;; esac
+      total=$((total + r))
+    done
+    if [ "$total" -gt 0 ]; then mem=$((total * page)); from=rss; fi
+  fi
+fi
+printf '@@cgroup\n'
+if [ -n "$mem" ]; then printf 'memory=%s\nfrom=%s\n' "$mem" "$from"; fi
+if [ -n "$pids" ]; then printf 'procs=%s\n' "$pids"; fi
+exit 0
 `
 
 // Unit describes one service. A name systemd has never heard of is not an
@@ -257,7 +341,7 @@ func (s *Service) Unit(ctx context.Context, h *store.Host, name string) (*Unit, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.run(ctx, h, elevate(showScript, clean), "")
+	res, err := s.run(ctx, h, elevate(showScript, clean, cgroupRoot, procDir), "")
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +352,46 @@ func (s *Service) Unit(ctx context.Context, h *store.Host, name string) (*Unit, 
 	if len(list.Units) == 0 {
 		return nil, fmt.Errorf("the host said nothing about %s", clean)
 	}
-	return &list.Units[0], nil
+	unit := list.Units[0]
+	applyCgroup(&unit, sections(res.Stdout)["cgroup"])
+	return &unit, nil
+}
+
+// applyCgroup fills in from the kernel what systemd would not say, and never
+// overrules it: where systemd gave a figure, systemd's is the one kept, because
+// the two are reading the same cgroup and systemd read it first.
+func applyCgroup(u *Unit, lines []string) {
+	values := map[string]string{}
+	for _, line := range lines {
+		if key, value, ok := strings.Cut(line, "="); ok {
+			values[key] = strings.TrimSpace(value)
+		}
+	}
+
+	if u.Memory > 0 {
+		// MemoryCurrent is the cgroup's own number, so it is named as one.
+		u.MemoryFrom = "cgroup"
+	} else if mem := memoryBytes(values["memory"]); mem > 0 {
+		// The script writes one of two words here and the screen branches on
+		// them, so anything else is dropped rather than forwarded: this is a
+		// string that came back over SSH.
+		switch from := values["from"]; from {
+		case "cgroup", "rss":
+			u.Memory, u.MemoryFrom = mem, from
+		}
+	}
+
+	// The processes in the unit's cgroup, when systemd is watching none of
+	// them. This is the first one listed rather than the main one — the kernel
+	// does not rank them — but on a forking daemon whose PIDFile systemd could
+	// not follow, that is the parent, and it is a live PID either way. A unit
+	// that is active with nothing running has an empty file here, which leaves
+	// the answer at 0 rather than inventing one.
+	if u.MainPID == 0 {
+		if pids := strings.Fields(values["procs"]); len(pids) > 0 {
+			u.MainPID = atoi(pids[0])
+		}
+	}
 }
 
 // actionScript runs one systemctl verb against one unit. systemctl says what
@@ -672,7 +795,7 @@ func unitFromProps(props map[string]string, clock hostClock) (Unit, bool) {
 		LoadError:   loadError(props["LoadError"]),
 		Template:    isTemplate(name),
 		Timer:       strings.HasSuffix(name, ".timer"),
-		MainPID:     atoi(props["MainPID"]),
+		MainPID:     mainPID(props),
 		Restarts:    atoi(props["NRestarts"]),
 		Memory:      memoryBytes(props["MemoryCurrent"]),
 		StartedBy:   startedBy(props),
@@ -692,6 +815,31 @@ func unitFromProps(props map[string]string, clock hostClock) (Unit, bool) {
 		unit.LastS = agoSeconds(props["LastTriggerUSec"], clock.now)
 	}
 	return unit, true
+}
+
+// mainPID is the process systemd is watching. MainPID is the answer wherever
+// systemd has one; ExecMainPID is the last process systemd itself spawned, and
+// is the answer on a Type=forking unit whose PIDFile= systemd could not follow,
+// where MainPID stays 0 for the life of the service.
+//
+// The fallback only applies while something is running. A unit that is active
+// with SubState=exited — a Type=oneshot with RemainAfterExit=yes — has no
+// process at all, and its ExecMainPID is the number of one that died: a PID
+// nobody can look up is worse than no PID.
+//
+// ExecMainPID is only asked for on the single-unit call, so on a listing this
+// is atoi(MainPID) and nothing more.
+func mainPID(props map[string]string) int {
+	if pid := atoi(props["MainPID"]); pid > 0 {
+		return pid
+	}
+	switch props["ActiveState"] {
+	case "active", "activating", "reloading", "deactivating":
+		if sub := props["SubState"]; sub != "exited" && sub != "dead" {
+			return atoi(props["ExecMainPID"])
+		}
+	}
+	return 0
 }
 
 // isTemplate reports whether a unit name is a pattern rather than a unit —

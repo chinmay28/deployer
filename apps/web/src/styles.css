@@ -1191,6 +1191,12 @@ button.block {
   margin-top: 12px;
 }
 
+/* Four figures rather than three. Two across leaves each tile wide enough for
+   a memory figure and a five-digit PID without either ellipsing. */
+.stats.pairs {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .stats > div {
   min-width: 0;
   padding: 8px 10px;

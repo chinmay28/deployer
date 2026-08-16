@@ -164,19 +164,28 @@ export default function HostService() {
                 />
               </div>
             ) : (
-              <div className="stats">
-                <Stat
-                  label={active ? 'Running for' : 'Stopped for'}
-                  value={unit.sinceS > 0 ? uptime(unit.sinceS) : '—'}
-                />
-                <Stat label="Memory" value={unit.memory > 0 ? bytes(unit.memory) : '—'} />
-                <Stat
-                  label={unit.restarts > 0 ? 'Restarts' : 'Main PID'}
-                  value={
-                    unit.restarts > 0 ? String(unit.restarts) : unit.mainPid > 0 ? String(unit.mainPid) : '—'
-                  }
-                />
-              </div>
+              <>
+                {/* Four figures, each in its own tile. Restarts used to take
+                    the PID's place whenever it was above zero, which hid the
+                    PID on exactly the services worth looking one up for. */}
+                <div className="stats pairs">
+                  <Stat
+                    label={active ? 'Running for' : 'Stopped for'}
+                    value={unit.sinceS > 0 ? uptime(unit.sinceS) : '—'}
+                  />
+                  <Stat
+                    label="Memory"
+                    value={unit.memory > 0 ? `${unit.memoryFrom === 'rss' ? '≈' : ''}${bytes(unit.memory)}` : '—'}
+                  />
+                  <Stat label="Main PID" value={unit.mainPid > 0 ? String(unit.mainPid) : '—'} />
+                  <Stat label="Restarts" value={String(unit.restarts)} />
+                </div>
+                {figureNotes(unit, active).map((note) => (
+                  <p key={note} className="sub" style={{ marginTop: 8, marginBottom: 0 }}>
+                    {note}
+                  </p>
+                ))}
+              </>
             )}
 
             {/* The other half of the pair. A timer on its own says when and
@@ -470,6 +479,44 @@ function StartedBy({ hostId, unit }: { hostId: number; unit: ServiceUnit }) {
 function UnitRef({ hostId, name }: { hostId: number; name: string }) {
   if (!name.endsWith('.service') && !name.endsWith('.timer')) return <span>{name}</span>
   return <Link to={`/hosts/${hostId}/service?name=${encodeURIComponent(name)}`}>{name}</Link>
+}
+
+/**
+ * What to say under the figures when one of them is missing or is not quite the
+ * measure it looks like.
+ *
+ * A dash on a running service is a question, and the answer is never "Deployer
+ * could not be bothered" — it is that this host does not count that unit's
+ * memory, or that this unit has no process to have a PID. Both have a cause
+ * worth naming and a fix worth naming with it. On a stopped service neither is
+ * a puzzle, and nothing is said.
+ */
+function figureNotes(unit: ServiceUnit, active: boolean): string[] {
+  const notes: string[] = []
+
+  if (unit.memoryFrom === 'rss') {
+    notes.push(
+      'Memory is what its processes have resident, added up: nothing on this host counts the ' +
+        'service’s cgroup, so anything they share is counted more than once.',
+    )
+  } else if (active && unit.memory === 0) {
+    notes.push(
+      'Nothing on this host is counting this service’s memory. Adding MemoryAccounting=yes to ' +
+        'its unit file turns it on from the next restart.',
+    )
+  }
+
+  if (active && unit.mainPid === 0) {
+    notes.push(
+      unit.sub === 'exited'
+        ? 'It is active with nothing running, so there is no process to have a PID. A ' +
+          'Type=oneshot service with RemainAfterExit=yes stays this way on purpose.'
+        : 'systemd is not watching a process for this one, and its cgroup is empty. A ' +
+          'Type=forking service needs PIDFile= before systemd can tell which process is the daemon.',
+    )
+  }
+
+  return notes
 }
 
 /** How long until a timer next fires. A timer that is not running has no next
