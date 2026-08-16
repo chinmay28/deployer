@@ -293,10 +293,19 @@ func TestUnitsMarkTemplates(t *testing.T) {
 	}
 }
 
+// kernelTree stands in for the two trees the script reads when systemd will not
+// answer: /sys/fs/cgroup and /proc. Empty directories are a host that has
+// nothing to add, which is what most of these tests want.
+type kernelTree struct{ cgroup, proc string }
+
 // showUnit runs the real single-unit script and reads back what it said.
-func showUnit(t *testing.T, name string, path []string) Unit {
+func showUnit(t *testing.T, name string, path []string, trees ...kernelTree) Unit {
 	t.Helper()
-	out, code := runScript(t, asUser(showScript, name), "", path...)
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	if len(trees) > 0 {
+		tree = trees[0]
+	}
+	out, code := runScript(t, asUser(showScript, name, tree.cgroup, tree.proc), "", path...)
 	if code != 0 {
 		t.Fatalf("showing %s exited %d", name, code)
 	}
@@ -304,7 +313,182 @@ func showUnit(t *testing.T, name string, path []string) Unit {
 	if len(list.Units) != 1 {
 		t.Fatalf("showing %s described %d units, want one", name, len(list.Units))
 	}
-	return list.Units[0]
+	unit := list.Units[0]
+	applyCgroup(&unit, sections(out)["cgroup"])
+	return unit
+}
+
+// kernelFile writes one of the files the kernel would have published, making
+// whatever directories the path needs.
+func kernelFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The two figures on the service card systemd most often leaves blank are its
+// memory and its PID, and neither is actually missing: the kernel is still
+// counting the cgroup and still has the processes in it. These are the four
+// ways of getting at them, in the order the script tries.
+
+// Under cgroup v2 the whole unit hangs off one root, and memory.current is the
+// same number MemoryCurrent would have carried had accounting been on.
+func TestUnitReadsMemoryFromTheCgroupSystemdWillNotAccount(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service",
+		"ActiveState=active",
+		"SubState=running",
+		"MainPID=0",
+		"MemoryCurrent=[not set]",
+		"ControlGroup=/system.slice/sand.service",
+	)
+
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	unit := filepath.Join(tree.cgroup, "system.slice", "sand.service")
+	kernelFile(t, filepath.Join(unit, "memory.current"), "52428800\n")
+	kernelFile(t, filepath.Join(unit, "cgroup.procs"), "4213\n4290\n")
+
+	got := showUnit(t, "sand.service", path, tree)
+	if got.Memory != 52428800 || got.MemoryFrom != "cgroup" {
+		t.Errorf("memory = %d from %q, want the cgroup's own 52428800", got.Memory, got.MemoryFrom)
+	}
+	if got.MainPID != 4213 {
+		t.Errorf("mainPid = %d, want 4213 — the first process in its cgroup", got.MainPID)
+	}
+}
+
+// Under cgroup v1 every controller is its own tree, so the same path hangs off
+// /sys/fs/cgroup/memory and /sys/fs/cgroup/systemd instead.
+func TestUnitReadsMemoryFromASplitCgroupHierarchy(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service",
+		"ActiveState=active",
+		"SubState=running",
+		"MemoryCurrent=[not set]",
+		"ControlGroup=/system.slice/sand.service",
+	)
+
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	kernelFile(t, filepath.Join(tree.cgroup, "memory", "system.slice", "sand.service", "memory.usage_in_bytes"), "1048576\n")
+	kernelFile(t, filepath.Join(tree.cgroup, "systemd", "system.slice", "sand.service", "cgroup.procs"), "77\n")
+
+	got := showUnit(t, "sand.service", path, tree)
+	if got.Memory != 1048576 || got.MemoryFrom != "cgroup" {
+		t.Errorf("memory = %d from %q, want 1048576 from the v1 memory controller", got.Memory, got.MemoryFrom)
+	}
+	if got.MainPID != 77 {
+		t.Errorf("mainPid = %d, want 77", got.MainPID)
+	}
+}
+
+// A host with no memory controller anywhere still has the processes. Adding up
+// what they have resident is a different measure — shared pages get counted
+// once per process — so it comes back named as one rather than passed off as
+// the cgroup's figure.
+func TestUnitFallsBackToResidentMemoryWithNoMemoryController(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service",
+		"ActiveState=active",
+		"SubState=running",
+		"MemoryCurrent=[not set]",
+		"ControlGroup=/system.slice/sand.service",
+	)
+
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	kernelFile(t, filepath.Join(tree.cgroup, "system.slice", "sand.service", "cgroup.procs"), "4213\n4290\n")
+	// statm is pages: size, resident, shared, and so on. Only the second
+	// counts, and a process that has gone since the file was read is skipped
+	// rather than being a zero.
+	kernelFile(t, filepath.Join(tree.proc, "4213", "statm"), "9000 512 100 1 0 200 0\n")
+	kernelFile(t, filepath.Join(tree.proc, "4290", "statm"), "9000 256 100 1 0 200 0\n")
+
+	got := showUnit(t, "sand.service", path, tree)
+	if want := int64(768 * os.Getpagesize()); got.Memory != want {
+		t.Errorf("memory = %d, want %d — 768 resident pages", got.Memory, want)
+	}
+	if got.MemoryFrom != "rss" {
+		t.Errorf("memoryFrom = %q, want %q so the screen can say it is an approximation", got.MemoryFrom, "rss")
+	}
+}
+
+// Where systemd does account, systemd's number is the one kept: it and the
+// fallback are reading the same cgroup, and systemd read it first.
+func TestUnitKeepsSystemdsOwnMemoryFigure(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service",
+		"ActiveState=active",
+		"SubState=running",
+		"MainPID=4213",
+		"MemoryCurrent=52428800",
+		"ControlGroup=/system.slice/sand.service",
+	)
+
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	unit := filepath.Join(tree.cgroup, "system.slice", "sand.service")
+	kernelFile(t, filepath.Join(unit, "memory.current"), "999\n")
+	kernelFile(t, filepath.Join(unit, "cgroup.procs"), "9999\n")
+
+	got := showUnit(t, "sand.service", path, tree)
+	if got.Memory != 52428800 || got.MemoryFrom != "cgroup" {
+		t.Errorf("memory = %d from %q, want systemd's own 52428800", got.Memory, got.MemoryFrom)
+	}
+	if got.MainPID != 4213 {
+		t.Errorf("mainPid = %d, want systemd's own 4213", got.MainPID)
+	}
+}
+
+// A Type=forking daemon whose PIDFile systemd could not follow leaves MainPID
+// at 0 for the life of the service. ExecMainPID is the process systemd itself
+// spawned, and it is still the daemon.
+func TestUnitFallsBackToTheProcessSystemdSpawned(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service",
+		"ActiveState=active",
+		"SubState=running",
+		"MainPID=0",
+		"ExecMainPID=8181",
+	)
+
+	if got := showUnit(t, "sand.service", path); got.MainPID != 8181 {
+		t.Errorf("mainPid = %d, want 8181 — the process systemd started", got.MainPID)
+	}
+}
+
+// A Type=oneshot unit with RemainAfterExit=yes is active with nothing running.
+// Its ExecMainPID is the number of a process that has gone, and a PID nobody
+// can look up is worse than no PID.
+func TestUnitDoesNotShowThePIDOfSomethingThatExited(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "firewall.service",
+		"ActiveState=active",
+		"SubState=exited",
+		"MainPID=0",
+		"ExecMainPID=8181",
+	)
+
+	if got := showUnit(t, "firewall.service", path); got.MainPID != 0 {
+		t.Errorf("mainPid = %d, want 0 — that process is gone", got.MainPID)
+	}
+}
+
+// A unit with no cgroup at all — anything stopped — asks the kernel nothing and
+// says nothing, rather than reading the root of the hierarchy and reporting the
+// whole machine's memory as the service's.
+func TestUnitWithNoCgroupReportsNoMemory(t *testing.T) {
+	state, path := withFakeSystemctl(t)
+	props(t, state, "sand.service", "ActiveState=inactive", "SubState=dead", "ControlGroup=/")
+
+	tree := kernelTree{cgroup: t.TempDir(), proc: t.TempDir()}
+	kernelFile(t, filepath.Join(tree.cgroup, "memory.current"), "8589934592\n")
+
+	got := showUnit(t, "sand.service", path, tree)
+	if got.Memory != 0 || got.MemoryFrom != "" {
+		t.Errorf("memory = %d from %q, want nothing for a stopped unit", got.Memory, got.MemoryFrom)
+	}
 }
 
 // "static" is systemd saying a unit has no [Install] section, which says

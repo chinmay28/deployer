@@ -190,8 +190,13 @@ export interface ServiceUnit {
    *  has. */
   lastS?: number
   mainPid: number
-  /** What its cgroup is using now; 0 where systemd does not account for it. */
+  /** What its cgroup is using now; 0 where nothing on the host counts it. */
   memory: number
+  /** Where that figure came from: 'cgroup' is the kernel's own accounting for
+   *  the unit, 'rss' is the resident size of its processes added up, which
+   *  counts shared pages once per process. Absent where there is no figure,
+   *  and on a listing, which does not ask. */
+  memoryFrom?: 'cgroup' | 'rss'
   /** How many times systemd has restarted it by itself. */
   restarts: number
   /** How long it has been in its current state, in seconds. */
