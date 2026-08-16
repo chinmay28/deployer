@@ -182,6 +182,12 @@ func TestHostMetricsEmpty(t *testing.T) {
 	if got.Summary == nil || got.Summary.Samples != 0 {
 		t.Errorf("summary = %+v, want an empty one rather than null", got.Summary)
 	}
+	// The same request carries what the host is busy with. A host never probed
+	// has nothing to say yet, and says so as null rather than as an idle
+	// machine — the UI reads that as "waiting for the next reading".
+	if !strings.Contains(w.Body.String(), `"processes":null`) {
+		t.Errorf("body = %s, want a null processes field before the first probe", w.Body)
+	}
 }
 
 // The day's ranges are meant to outlive the sample window the caller asks for:

@@ -13,8 +13,13 @@ aarch64
 Debian GNU/Linux 12 (bookworm)
 @@sudo
 yes
+@@pagesize
+4096
 @@cpu1
 cpu  1000 20 300 5000 100 0 10 0 0 0
+@@proc1
+1 400 2000 systemd
+219 1000 60000 python3
 @@uptime
 104523.12 830192.44
 @@loadavg
@@ -35,6 +40,9 @@ tmpfs               400000        0    400000       0% /dev/shm
 48123
 @@cpu2
 cpu  1100 20 340 5400 120 0 12 0 0 0
+@@proc2
+1 402 2000 systemd
+219 1071 61000 python3
 `
 
 func TestParseProbe(t *testing.T) {
@@ -93,6 +101,22 @@ func TestParseProbe(t *testing.T) {
 	if p.Sample.Disks[1].Mount != "/boot/firmware" {
 		t.Errorf("second disk = %+v, want /boot/firmware", p.Sample.Disks[1])
 	}
+
+	// The two /proc walks bracket the same second as the two /proc/stat reads,
+	// so a process's share is measured against the machine's own 562 jiffies:
+	// python3 gained 71 of them.
+	if p.Processes == nil {
+		t.Fatal("processes = nil, want the top consumers of the same interval")
+	}
+	if len(p.Processes.TopCPU) != 2 || p.Processes.TopCPU[0].Name != "python3" {
+		t.Fatalf("top cpu = %+v, want python3 first", p.Processes.TopCPU)
+	}
+	if want := 71.0 / 562.0 * 100; !closeTo(p.Processes.TopCPU[0].CPUPct, want, 0.01) {
+		t.Errorf("python3 cpuPct = %.3f, want %.3f", p.Processes.TopCPU[0].CPUPct, want)
+	}
+	if want := int64(61000 * 4096); p.Processes.TopMem[0].MemBytes != want {
+		t.Errorf("top memory = %+v, want python3 at %d bytes", p.Processes.TopMem[0], want)
+	}
 }
 
 func TestParseProbeMissingSections(t *testing.T) {
@@ -142,6 +166,10 @@ cpu  10 0 5 100 0 0 0 0 0 0
 	// Identical /proc/stat reads mean no elapsed jiffies, not 100% busy.
 	if p.Sample.CPUPct != 0 {
 		t.Errorf("cpuPct = %v, want 0 for a zero-length interval", p.Sample.CPUPct)
+	}
+	// A host that did not walk /proc leaves the question unanswered.
+	if p.Processes != nil {
+		t.Errorf("processes = %+v, want nil where the host listed none", p.Processes)
 	}
 }
 

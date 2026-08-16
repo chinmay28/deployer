@@ -42,6 +42,27 @@ export interface MetricSummary {
   memTotal: number
 }
 
+/** One process, as it was during the second the probe watched. */
+export interface HostProcess {
+  pid: number
+  /** comm, which the kernel truncates to 15 characters. */
+  name: string
+  /** Its share of the whole machine over that second — the same scale as the
+   *  host's own CPU figure, so four busy cores are 100% between them. */
+  cpuPct: number
+  /** Resident memory, and the same as a share of the host's total. */
+  memBytes: number
+  memPct: number
+}
+
+/** What a host was busy with at one moment. Not history: the server keeps only
+ *  the newest snapshot, so this is null until the first probe after a restart. */
+export interface HostProcesses {
+  takenAt: string
+  topCpu: HostProcess[]
+  topMem: HostProcess[]
+}
+
 export interface Host {
   id: number
   name: string

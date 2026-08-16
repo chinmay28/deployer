@@ -136,6 +136,9 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "delete host")
 		return
 	}
+	// SQLite reuses row ids, so what is held in memory about this host goes
+	// with it rather than waiting to be inherited by the next one.
+	s.Hosts.Forget(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -215,11 +218,16 @@ func (s *Server) handleHostMetrics(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "host metrics")
 		return
 	}
+	// The process snapshot rides along with the metrics the screen is already
+	// polling for: it comes from the same probe, so asking for it separately
+	// would be a second SSH session for something already in hand. It is null
+	// until the first probe since Deployer started, which is seconds away.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"hostId":  h.ID,
-		"minutes": minutes,
-		"samples": samples,
-		"summary": summary,
+		"hostId":    h.ID,
+		"minutes":   minutes,
+		"samples":   samples,
+		"summary":   summary,
+		"processes": s.Hosts.Processes(h.ID),
 	})
 }
 
