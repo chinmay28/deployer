@@ -66,6 +66,19 @@ func TestCreateAppValidation(t *testing.T) {
 			`{"name":"x","installCommand":"true","healthType":"http","healthTarget":"http://{HOST}:{PORT}/"}`,
 			"unknown placeholder",
 		},
+		// An uninstall command is optional, but one that is given is checked
+		// as closely as the install command beside it. Finding out it was
+		// wrong while trying to remove something is the worst moment for it.
+		{
+			"uninstall command naming an undeclared parameter",
+			`{"name":"x","installCommand":"true","uninstallCommand":"remove --port {{port}}"}`,
+			"uninstall command has unknown placeholder",
+		},
+		{
+			"quoted placeholder in the uninstall command",
+			`{"name":"x","installCommand":"true","uninstallCommand":"remove \"{{tag}}\"","params":[{"name":"tag"}]}`,
+			"remove the quotes",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

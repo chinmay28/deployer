@@ -40,10 +40,19 @@ func (s *Server) handleDeployApp(w http.ResponseWriter, r *http.Request) {
 // startDeployment is shared by the deploy and redeploy endpoints.
 func (s *Server) startDeployment(w http.ResponseWriter, r *http.Request, appID, hostID int64, params map[string]string) {
 	dep, err := s.Runner.Start(r.Context(), appID, hostID, params)
+	s.writeStartedDeployment(w, dep, err)
+}
+
+// writeStartedDeployment turns whatever the runner said into a response. An
+// uninstall goes through the same path as a deploy — same runner, same
+// deployment record, same log — so it answers with the same codes.
+func (s *Server) writeStartedDeployment(w http.ResponseWriter, dep *store.Deployment, err error) {
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusAccepted, dep)
-	case errors.Is(err, deploy.ErrAlreadyRunning):
+	case errors.Is(err, deploy.ErrAlreadyRunning),
+		errors.Is(err, deploy.ErrNoUninstallCommand),
+		errors.Is(err, deploy.ErrCannotUninstallSelf):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "app or host not found")

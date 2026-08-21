@@ -73,8 +73,13 @@ export default function Overview() {
                 <Link key={deployment.id} className="card" to={`/deployments/${deployment.id}`}>
                   <div className="row between">
                     <div className="grow">
+                      {/* An uninstall is said in words rather than with the
+                          arrow a deploy gets: it went the other way, and this
+                          is not a row to misread at a glance. */}
                       <div className="title">
-                        {deployment.appName} → {deployment.hostName}
+                        {deployment.kind === 'uninstall'
+                          ? `Uninstall ${deployment.appName} from ${deployment.hostName}`
+                          : `${deployment.appName} → ${deployment.hostName}`}
                       </div>
                       <div className="sub">{time(deployment.startedAt)}</div>
                     </div>

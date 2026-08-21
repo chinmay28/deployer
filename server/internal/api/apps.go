@@ -13,18 +13,20 @@ var paramNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // appInput is the editable shape of an app.
 type appInput struct {
-	Name           string        `json:"name"`
-	Description    string        `json:"description"`
-	InstallCommand string        `json:"installCommand"`
-	Params         []store.Param `json:"params"`
-	HealthType     string        `json:"healthType"`
-	HealthTarget   string        `json:"healthTarget"`
+	Name             string        `json:"name"`
+	Description      string        `json:"description"`
+	InstallCommand   string        `json:"installCommand"`
+	UninstallCommand string        `json:"uninstallCommand"`
+	Params           []store.Param `json:"params"`
+	HealthType       string        `json:"healthType"`
+	HealthTarget     string        `json:"healthTarget"`
 }
 
 func (in *appInput) normalize() string {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Description = strings.TrimSpace(in.Description)
 	in.InstallCommand = strings.TrimSpace(in.InstallCommand)
+	in.UninstallCommand = strings.TrimSpace(in.UninstallCommand)
 	in.HealthTarget = strings.TrimSpace(in.HealthTarget)
 	if in.HealthType == "" {
 		in.HealthType = store.HealthNone
@@ -76,16 +78,27 @@ func (in *appInput) normalize() string {
 		return "health check type must be none, http or systemd"
 	}
 
-	// Catch placeholder mistakes now rather than at deploy time.
-	if err := deploy.ValidateShellTemplate(in.InstallCommand); err != nil {
-		return "install command: " + err.Error()
-	}
+	// Catch placeholder mistakes now rather than at deploy time. An uninstall
+	// command is optional, but one that is there gets the same treatment: a
+	// command nobody discovers is wrong until they are trying to remove
+	// something is the worst time to find out.
 	values := builtinPlaceholders()
 	for _, p := range in.Params {
 		values[p.Name] = p.Default
 	}
-	if _, err := deploy.Render(in.InstallCommand, values, true); err != nil {
-		return "install command has " + err.Error() + " — declare it as a parameter first"
+	for _, c := range []struct{ label, command string }{
+		{"install command", in.InstallCommand},
+		{"uninstall command", in.UninstallCommand},
+	} {
+		if c.command == "" {
+			continue
+		}
+		if err := deploy.ValidateShellTemplate(c.command); err != nil {
+			return c.label + ": " + err.Error()
+		}
+		if _, err := deploy.Render(c.command, values, true); err != nil {
+			return c.label + " has " + err.Error() + " — declare it as a parameter first"
+		}
 	}
 	if in.HealthTarget != "" {
 		if _, err := deploy.RenderTarget(in.HealthTarget, values, false); err != nil {
@@ -108,6 +121,7 @@ func (in *appInput) apply(a *store.App) {
 	a.Name = in.Name
 	a.Description = in.Description
 	a.InstallCommand = in.InstallCommand
+	a.UninstallCommand = in.UninstallCommand
 	a.Params = in.Params
 	a.HealthType = in.HealthType
 	a.HealthTarget = in.HealthTarget
@@ -169,7 +183,8 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	in := appInput{
 		Name: app.Name, Description: app.Description, InstallCommand: app.InstallCommand,
-		Params: app.Params, HealthType: app.HealthType, HealthTarget: app.HealthTarget,
+		UninstallCommand: app.UninstallCommand, Params: app.Params,
+		HealthType: app.HealthType, HealthTarget: app.HealthTarget,
 	}
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -187,6 +202,10 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, app)
 }
 
+// handleDeleteApp removes an app from Deployer. Nothing is uninstalled: an app
+// that is still on a host is taken off it one host at a time, through
+// handleUninstall, because that is a command that can fail and has a log worth
+// watching.
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {

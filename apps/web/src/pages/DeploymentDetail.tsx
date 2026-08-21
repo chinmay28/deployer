@@ -116,7 +116,12 @@ export default function DeploymentDetail() {
             <div className="row between">
               <div className="grow">
                 <div className="title">
-                  {deployment.appName} → {deployment.hostName}
+                  {/* An uninstall runs the other way round, and reads as a
+                      sentence rather than an arrow: it is the one entry in
+                      this history nobody wants to mistake for a deploy. */}
+                  {deployment.kind === 'uninstall'
+                    ? `Uninstall ${deployment.appName} from ${deployment.hostName}`
+                    : `${deployment.appName} → ${deployment.hostName}`}
                 </div>
                 <div className="sub">
                   {time(deployment.startedAt)} · {duration(deployment.startedAt, deployment.finishedAt)}
@@ -144,7 +149,9 @@ export default function DeploymentDetail() {
             {deployment.status === 'failed' && (
               <div className="actions">
                 <Link to={`/apps/${deployment.appId}`} style={{ flex: 1 }}>
-                  <button className="primary block">Try again</button>
+                  <button className="primary block">
+                    {deployment.kind === 'uninstall' ? 'Back to the app' : 'Try again'}
+                  </button>
                 </Link>
               </div>
             )}

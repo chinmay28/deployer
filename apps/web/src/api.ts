@@ -64,6 +64,7 @@ export interface AppInput {
   name: string
   description: string
   installCommand: string
+  uninstallCommand: string
   params: App['params']
   healthType: App['healthType']
   healthTarget: string
@@ -183,6 +184,13 @@ export const api = {
     request<{ healthStatus: string; healthDetail: string }>(`/api/installations/${id}/check`, {
       method: 'POST',
     }),
+  /** Runs the app's uninstall command on the host and, once it succeeds,
+   *  forgets the installation. It is a deployment like any other, so it comes
+   *  back with an id to follow the log on. */
+  uninstall: (id: number) =>
+    request<Deployment>(`/api/installations/${id}/uninstall`, { method: 'POST' }),
+  /** Drops Deployer's record and nothing else — whatever the app left on the
+   *  host stays there. Uninstall is the one that removes it. */
   forgetInstallation: (id: number) =>
     request<void>(`/api/installations/${id}`, { method: 'DELETE' }),
 

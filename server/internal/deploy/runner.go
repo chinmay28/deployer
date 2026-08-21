@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,16 @@ const maxLogBytes = 1 << 20
 
 // ErrAlreadyRunning means this app is already deploying to this host.
 var ErrAlreadyRunning = errors.New("a deployment for this app and host is already running")
+
+// ErrNoUninstallCommand means the app never said how to take itself back off a
+// host, so there is nothing to run.
+var ErrNoUninstallCommand = errors.New("this app has no uninstall command")
+
+// ErrCannotUninstallSelf refuses to remove Deployer from the machine Deployer
+// is running on. An install can survive the restart it causes by running
+// detached and being picked back up afterwards; an uninstall has nothing left
+// to pick it back up, and would take the log, the record and the UI with it.
+var ErrCannotUninstallSelf = errors.New("Deployer can't uninstall itself from the machine it runs on")
 
 // Runner starts deployments and keeps their live output available.
 type Runner struct {
@@ -148,6 +159,26 @@ func (r *Run) log() string {
 // Start renders the install command, records a deployment and runs it in the
 // background. It returns as soon as the deployment row exists.
 func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[string]string) (*store.Deployment, error) {
+	return rn.start(ctx, store.KindInstall, appID, hostID, submitted)
+}
+
+// Uninstall runs the app's uninstall command on a host and, if it succeeds,
+// forgets the installation — the app is gone from the machine, so Deployer's
+// record of it being there should go too. It reuses the parameters the install
+// was given, since undoing an install generally has to know what it was told.
+//
+// A failed uninstall leaves the installation alone: the app may well still be
+// there, and a record that quietly disappeared would be the worse of the two
+// wrong answers.
+func (rn *Runner) Uninstall(ctx context.Context, appID, hostID int64) (*store.Deployment, error) {
+	in, err := rn.db.FindInstallation(ctx, appID, hostID)
+	if err != nil {
+		return nil, err
+	}
+	return rn.start(ctx, store.KindUninstall, appID, hostID, in.Params)
+}
+
+func (rn *Runner) start(ctx context.Context, kind string, appID, hostID int64, submitted map[string]string) (*store.Deployment, error) {
 	app, err := rn.db.GetApp(ctx, appID)
 	if err != nil {
 		return nil, err
@@ -156,7 +187,18 @@ func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[
 	if err != nil {
 		return nil, err
 	}
-	command, params, err := BuildCommand(app, host, submitted)
+
+	build := BuildCommand
+	if kind == store.KindUninstall {
+		if strings.TrimSpace(app.UninstallCommand) == "" {
+			return nil, ErrNoUninstallCommand
+		}
+		if app.SelfUpdate && host.IsSelf {
+			return nil, ErrCannotUninstallSelf
+		}
+		build = BuildUninstallCommand
+	}
+	command, params, err := build(app, host, submitted)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +213,7 @@ func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[
 	rn.mu.Unlock()
 
 	dep, err := rn.db.CreateDeployment(ctx, &store.Deployment{
-		AppID: appID, HostID: hostID, Command: command, Params: params,
+		AppID: appID, HostID: hostID, Command: command, Params: params, Kind: kind,
 	})
 	if err != nil {
 		rn.mu.Lock()
@@ -184,7 +226,7 @@ func (rn *Runner) Start(ctx context.Context, appID, hostID int64, submitted map[
 	// watching the deployment, so that one runs detached and is followed
 	// through a file on the host. The log path needs the id, which only exists
 	// once the row does.
-	detached := app.SelfUpdate && host.IsSelf
+	detached := kind == store.KindInstall && app.SelfUpdate && host.IsSelf
 	if detached {
 		dep.DetachedLog = detachedLogPath(dep.ID)
 		if err := rn.db.SetDetachedLog(ctx, dep.ID, dep.DetachedLog); err != nil {
@@ -224,8 +266,13 @@ func (rn *Runner) execute(ctx context.Context, cancel context.CancelFunc, run *R
 		run.finish()
 	}()
 
-	fmt.Fprintf(run, "==> Deploying %s to %s (%s@%s)\n$ %s\n\n",
-		app.Name, host.Name, host.Username, host.Address, dep.Command)
+	uninstalling := dep.Kind == store.KindUninstall
+	verb, preposition := "Deploying", "to"
+	if uninstalling {
+		verb, preposition = "Uninstalling", "from"
+	}
+	fmt.Fprintf(run, "==> %s %s %s %s (%s@%s)\n$ %s\n\n",
+		verb, app.Name, preposition, host.Name, host.Username, host.Address, dep.Command)
 
 	status, exitCode, failure := rn.runCommand(ctx, run, host, dep.Command)
 
@@ -235,6 +282,11 @@ func (rn *Runner) execute(ctx context.Context, cancel context.CancelFunc, run *R
 
 	switch status {
 	case store.DeploySucceeded:
+		if uninstalling {
+			fmt.Fprintf(run, "\n==> Removed from %s in %s\n",
+				host.Name, time.Since(dep.StartedAt).Round(time.Second))
+			break
+		}
 		fmt.Fprintf(run, "\n==> Succeeded in %s\n", time.Since(dep.StartedAt).Round(time.Second))
 	case store.DeployCanceled:
 		fmt.Fprintf(run, "\n==> Canceled\n")
@@ -246,7 +298,21 @@ func (rn *Runner) execute(ctx context.Context, cancel context.CancelFunc, run *R
 		rn.log.Error("deploy: record outcome", "deployment", dep.ID, "err", err)
 	}
 	if status != store.DeploySucceeded {
-		rn.log.Warn("deployment did not succeed", "app", app.Name, "host", host.Name, "status", status, "err", failure)
+		rn.log.Warn("deployment did not succeed", "app", app.Name, "host", host.Name,
+			"kind", dep.Kind, "status", status, "err", failure)
+		return
+	}
+
+	// A finished uninstall is the end of the app on that host, so the record of
+	// it being there goes with it — along with the health check that would
+	// otherwise keep asking after something deliberately removed. The
+	// deployment stays: it is the log of what was run.
+	if uninstalling {
+		if err := rn.db.ForgetInstallation(saveCtx, app.ID, host.ID); err != nil {
+			rn.log.Error("deploy: forget installation", "deployment", dep.ID, "err", err)
+			return
+		}
+		rn.log.Info("uninstall succeeded", "app", app.Name, "host", host.Name)
 		return
 	}
 

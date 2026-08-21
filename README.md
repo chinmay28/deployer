@@ -140,6 +140,18 @@ Install commands run with `pipefail`, so a failing `curl` in
 exit status, and with `DEBIAN_FRONTEND=noninteractive` so package managers don't
 stop to ask questions.
 
+How an app comes back off a host is a second command, declared beside the
+first, because an install script rarely knows how to undo itself:
+
+```
+curl -fsSL https://raw.githubusercontent.com/chinmay28/countroster/main/scripts/quickstart.sh | sudo bash -s -- --uninstall
+```
+
+It is written the same way, takes the same parameters, and is checked when the
+app is saved rather than when somebody is trying to remove something. It is
+optional, and an app without one simply has no **Uninstall** button — see
+[Removing an app from a host](#removing-an-app-from-a-host).
+
 An app can also declare a **health check** — an HTTP URL (`http://{HOST}:8787/`)
 or a systemd unit (`countroster.service`) — which is what turns "the script ran"
 into "the app is actually running". It runs after each deploy and every minute
@@ -193,6 +205,41 @@ A successful deployment records an installation, which is what makes the next
 one a single tap: **Redeploy** reopens the same confirmation prefilled with the
 parameters you used last time. Deployments of the same app to the same host are
 serialized — a second one is refused while the first is running.
+
+## Removing an app from a host
+
+There is more than one thing "remove" can mean here, and Deployer keeps them
+apart because they are not interchangeable.
+
+**Uninstall** runs the app's uninstall command on the machine. It is a
+deployment in every respect — same confirmation showing exactly what will run,
+same live log, same record in the history — and it goes through the app's
+parameters, using the ones that install was given, because undoing an install
+generally has to know what it was told: the port it took, the directory it
+unpacked into. Once the command succeeds Deployer forgets the installation, and
+with it the health check that would otherwise keep asking after something
+deliberately removed. The log stays: it is the record of what was run.
+
+A failed uninstall keeps the installation. The app may well still be there, and
+a record that quietly disappeared is the worse of the two wrong answers — so the
+app stays listed, with the failure to read.
+
+**Forget** is the other one: it drops Deployer's record and touches the host not
+at all. That is what you want for an app you removed by hand, or one whose host
+is never coming back.
+
+Two refusals. An app that declared no uninstall command cannot be uninstalled —
+the button isn't there, and the API says so rather than running nothing and
+calling it a success. And **Deployer will not uninstall itself from the machine
+it runs on**: an update survives the restart it causes by running detached and
+being picked back up afterwards, but an uninstall has nothing left to pick it
+back up, and would take the log, the record and the UI down with it half way
+through.
+
+Deleting the app itself is a third thing again, and is still Deployer-only:
+it removes the app and its history from Deployer, and anything already installed
+on a host keeps running there. The confirmation says which hosts those are,
+since after the delete there is nothing left to remove them with.
 
 ## Managing a host
 
@@ -479,6 +526,13 @@ store, the API handlers, and — where a local `sshd` can be started — real SS
 connections: key auth, host-key pinning and rejection, live deployments, exit
 codes, cancellation, log streaming and health checks.
 
+Uninstalling is tested over the same real connection, both ways round: a command
+that succeeds has to actually run on the host, be recorded as an uninstall
+rather than a deploy, and leave the installation forgotten and the log behind;
+one that exits non-zero has to leave the installation exactly where it was. Its
+refusals get their own tests too — an app that declared no uninstall command,
+and Deployer asked to uninstall itself from the machine it runs on.
+
 The shell scripts behind host management are tested by running them: against a
 real filesystem, through a real shell, with the parsers the SSH path uses, both
 with GNU `find` and with it forced to fail so the busybox fallback is covered.
@@ -555,6 +609,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `GET`    | `/api/installations`                | what is deployed where, with health  |
 | `POST`   | `/api/installations/{id}/redeploy`  | run again with the saved parameters  |
 | `POST`   | `/api/installations/{id}/check`     | run the health check now             |
+| `POST`   | `/api/installations/{id}/uninstall` | run the app's uninstall command on the host, then forget it |
 | `DELETE` | `/api/installations/{id}`           | forget it (nothing is uninstalled)   |
 | `GET`    | `/api/deployments`                  | history, `?appId=`/`?hostId=`        |
 | `GET`    | `/api/deployments/{id}`             | one deployment, with its log         |
