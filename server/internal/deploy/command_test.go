@@ -134,6 +134,33 @@ func TestBuildCommandDefaultsAndBuiltins(t *testing.T) {
 	}
 }
 
+// An uninstall renders from the app's other command, through the same
+// parameters and the same quoting — undoing an install generally has to know
+// what that install was told.
+func TestBuildUninstallCommand(t *testing.T) {
+	app := &store.App{
+		InstallCommand:   "install --port {{port}}",
+		UninstallCommand: "remove --port {{port}} --from {{host}} --dir {{dir}}",
+		Params: []store.Param{
+			{Name: "port", Label: "Port", Default: "8787"},
+			{Name: "dir", Label: "Directory", Default: "/srv/photos"},
+		},
+	}
+	host := &store.Host{Name: "nakedpi", Address: "192.168.2.123", Username: "chinmay"}
+
+	// The values a real uninstall passes are the ones the installation kept.
+	command, _, err := BuildUninstallCommand(app, host, map[string]string{
+		"port": "9000", "dir": "/srv/my photos",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `remove --port 9000 --from 192.168.2.123 --dir '/srv/my photos'`
+	if command != want {
+		t.Errorf("command = %s\nwant     = %s", command, want)
+	}
+}
+
 func TestBuildCommandRequiresRequiredParams(t *testing.T) {
 	app := &store.App{
 		InstallCommand: "install --token {{token}}",

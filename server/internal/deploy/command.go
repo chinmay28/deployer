@@ -122,20 +122,33 @@ func ResolveParams(app *store.App, host *store.Host, submitted map[string]string
 
 // BuildCommand renders an app's install command for a host.
 func BuildCommand(app *store.App, host *store.Host, submitted map[string]string) (command string, params map[string]string, err error) {
+	return buildFrom(app.InstallCommand, app, host, submitted)
+}
+
+// BuildUninstallCommand renders the command that takes an app back off a host.
+// It goes through the same parameters as an install, because undoing one
+// usually needs to know what it was told: the port it took, the user it made,
+// the directory it unpacked into.
+func BuildUninstallCommand(app *store.App, host *store.Host, submitted map[string]string) (command string, params map[string]string, err error) {
+	return buildFrom(app.UninstallCommand, app, host, submitted)
+}
+
+func buildFrom(template string, app *store.App, host *store.Host, submitted map[string]string) (command string, params map[string]string, err error) {
 	values, params, err := ResolveParams(app, host, submitted)
 	if err != nil {
 		return "", nil, err
 	}
-	rendered, err := Render(app.InstallCommand, values, true)
+	rendered, err := Render(template, values, true)
 	if err != nil {
 		return "", nil, err
 	}
 	return rendered, params, nil
 }
 
-// prelude makes install commands behave the same everywhere: a failing curl in
-// `curl ... | sudo bash` must fail the deployment rather than being masked by
-// bash's exit status, and package managers must not stop to ask questions.
+// prelude makes install and uninstall commands behave the same everywhere: a
+// failing curl in `curl ... | sudo bash` must fail the deployment rather than
+// being masked by bash's exit status, and package managers must not stop to
+// ask questions.
 const prelude = `set -o pipefail 2>/dev/null || true
 export DEBIAN_FRONTEND=noninteractive
 `

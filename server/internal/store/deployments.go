@@ -17,19 +17,29 @@ const (
 	DeployInterrupted = "interrupted" // the server stopped while it was running
 )
 
+// What a deployment ran: the app's install command, or the one that takes it
+// back off the host again.
+const (
+	KindInstall   = "install"
+	KindUninstall = "uninstall"
+)
+
 // Deployment is one run of an app's install command on a host.
 type Deployment struct {
-	ID         int64             `json:"id"`
-	AppID      int64             `json:"appId"`
-	HostID     int64             `json:"hostId"`
-	Command    string            `json:"command"`
-	Params     map[string]string `json:"params"`
-	Status     string            `json:"status"`
-	ExitCode   *int              `json:"exitCode"`
-	Error      string            `json:"error"`
-	Log        string            `json:"log,omitempty"`
-	StartedAt  time.Time         `json:"startedAt"`
-	FinishedAt *time.Time        `json:"finishedAt"`
+	ID      int64             `json:"id"`
+	AppID   int64             `json:"appId"`
+	HostID  int64             `json:"hostId"`
+	Command string            `json:"command"`
+	Params  map[string]string `json:"params"`
+	// Kind is "install" or "uninstall": which of the app's two commands this
+	// run was. Empty on the way in means an install.
+	Kind       string     `json:"kind"`
+	Status     string     `json:"status"`
+	ExitCode   *int       `json:"exitCode"`
+	Error      string     `json:"error"`
+	Log        string     `json:"log,omitempty"`
+	StartedAt  time.Time  `json:"startedAt"`
+	FinishedAt *time.Time `json:"finishedAt"`
 	// DetachedLog is where the command writes on the host when it has to
 	// outlive Deployer. Empty for ordinary deployments.
 	DetachedLog string `json:"-"`
@@ -42,7 +52,7 @@ type Deployment struct {
 // Done reports whether the deployment has stopped running.
 func (d *Deployment) Done() bool { return d.Status != DeployRunning }
 
-const deploymentColumns = `d.id, d.app_id, d.host_id, d.command, d.params, d.status,
+const deploymentColumns = `d.id, d.app_id, d.host_id, d.command, d.params, d.kind, d.status,
 	d.exit_code, d.error, d.started_at, d.finished_at, d.detached_log`
 
 func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deployment, error) {
@@ -52,7 +62,7 @@ func scanDeployment(row interface{ Scan(...any) error }, withLog bool) (*Deploym
 	var appName, hostName sql.NullString
 	// Every query joins the app and host names; the log is only worth carrying
 	// when a single deployment was asked for.
-	targets := []any{&d.ID, &d.AppID, &d.HostID, &d.Command, &params, &d.Status,
+	targets := []any{&d.ID, &d.AppID, &d.HostID, &d.Command, &params, &d.Kind, &d.Status,
 		&d.ExitCode, &d.Error, &started, &finished, &d.DetachedLog, &appName, &hostName}
 	if withLog {
 		targets = append(targets, &d.Log)
@@ -83,10 +93,14 @@ func (d *DB) CreateDeployment(ctx context.Context, dep *Deployment) (*Deployment
 	if err != nil {
 		return nil, err
 	}
+	kind := dep.Kind
+	if kind == "" {
+		kind = KindInstall
+	}
 	res, err := d.sql.ExecContext(ctx, `
-		INSERT INTO deployments (app_id, host_id, command, params, status, started_at, detached_log)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		dep.AppID, dep.HostID, dep.Command, string(params), DeployRunning,
+		INSERT INTO deployments (app_id, host_id, command, params, kind, status, started_at, detached_log)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		dep.AppID, dep.HostID, dep.Command, string(params), kind, DeployRunning,
 		time.Now().UTC().Format(time.RFC3339Nano), dep.DetachedLog)
 	if err != nil {
 		return nil, err
@@ -312,6 +326,16 @@ func (d *DB) DeleteInstallation(ctx context.Context, id int64) error {
 		return err
 	}
 	return requireRow(res)
+}
+
+// ForgetInstallation drops the record of an app on a host, by the pair rather
+// than by id — which is what a finished uninstall has to hand. Deleting an
+// installation that is already gone is not an error: somebody forgetting it
+// while the uninstall ran wanted the same end state.
+func (d *DB) ForgetInstallation(ctx context.Context, appID, hostID int64) error {
+	_, err := d.sql.ExecContext(ctx,
+		`DELETE FROM installations WHERE app_id = ? AND host_id = ?`, appID, hostID)
+	return err
 }
 
 // SetInstallationHealth records the result of a health check.

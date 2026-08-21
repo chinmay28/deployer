@@ -91,6 +91,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/installations", s.handleListInstallations)
 	mux.HandleFunc("GET /api/installations/{id}", s.handleGetInstallation)
 	mux.HandleFunc("DELETE /api/installations/{id}", s.handleForgetInstallation)
+	mux.HandleFunc("POST /api/installations/{id}/uninstall", s.handleUninstall)
 	mux.HandleFunc("POST /api/installations/{id}/check", s.handleCheckInstallation)
 	mux.HandleFunc("POST /api/installations/{id}/redeploy", s.handleRedeploy)
 

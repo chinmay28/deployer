@@ -251,3 +251,102 @@ func TestSamplesRoundTripAndPrune(t *testing.T) {
 		t.Errorf("samples survived host deletion: %d rows", len(left))
 	}
 }
+
+// An app's uninstall command survives the round trip, and the deployment kind
+// defaults to an install — which is what every row written before the column
+// existed is.
+func TestAppUninstallCommandAndDeploymentKind(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	app, err := db.CreateApp(ctx, &App{
+		Name:             "photos",
+		InstallCommand:   "install --port {{port}}",
+		UninstallCommand: "uninstall --port {{port}}",
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if app.UninstallCommand != "uninstall --port {{port}}" {
+		t.Errorf("uninstall command = %q", app.UninstallCommand)
+	}
+
+	app.UninstallCommand = "purge"
+	if err := db.UpdateApp(ctx, app); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	reread, err := db.GetApp(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApp: %v", err)
+	}
+	if reread.UninstallCommand != "purge" {
+		t.Errorf("uninstall command after update = %q, want %q", reread.UninstallCommand, "purge")
+	}
+
+	host, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "pi.local", Port: 22, Username: "pi"})
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+	install, err := db.CreateDeployment(ctx, &Deployment{AppID: app.ID, HostID: host.ID, Command: "install"})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if install.Kind != KindInstall {
+		t.Errorf("kind = %q, want %q for a deployment that did not say", install.Kind, KindInstall)
+	}
+	removal, err := db.CreateDeployment(ctx, &Deployment{
+		AppID: app.ID, HostID: host.ID, Command: "purge", Kind: KindUninstall,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if removal.Kind != KindUninstall {
+		t.Errorf("kind = %q, want %q", removal.Kind, KindUninstall)
+	}
+	// Listings carry it too: history has to say which of the two a row was.
+	list, err := db.ListDeployments(ctx, DeploymentFilter{AppID: app.ID})
+	if err != nil {
+		t.Fatalf("ListDeployments: %v", err)
+	}
+	if len(list) != 2 || list[0].Kind != KindUninstall {
+		t.Fatalf("listed deployments = %+v", list)
+	}
+}
+
+// ForgetInstallation works from the app/host pair a finished uninstall has, and
+// says nothing when there is no longer a record to remove.
+func TestForgetInstallationByPair(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	app, err := db.CreateApp(ctx, &App{Name: "photos", InstallCommand: "install"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := db.CreateHost(ctx, &Host{Name: "pi", Address: "pi.local", Port: 22, Username: "pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := db.CreateDeployment(ctx, &Deployment{AppID: app.ID, HostID: host.ID, Command: "install"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertInstallation(ctx, app.ID, host.ID, nil, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ForgetInstallation(ctx, app.ID, host.ID); err != nil {
+		t.Fatalf("ForgetInstallation: %v", err)
+	}
+	if _, err := db.FindInstallation(ctx, app.ID, host.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("installation still there: %v", err)
+	}
+	// Somebody forgetting it by hand while the uninstall ran wanted the same
+	// end state, so a second call is not an error.
+	if err := db.ForgetInstallation(ctx, app.ID, host.ID); err != nil {
+		t.Errorf("second ForgetInstallation: %v", err)
+	}
+	// The deployment record is the log of what ran; it stays.
+	if _, err := db.GetDeployment(ctx, dep.ID); err != nil {
+		t.Errorf("deployment gone after forgetting the installation: %v", err)
+	}
+}

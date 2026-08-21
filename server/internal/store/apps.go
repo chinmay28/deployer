@@ -35,27 +35,31 @@ type Param struct {
 // App is something Deployer knows how to install, defined by a one-line
 // install command.
 type App struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	InstallCommand string    `json:"installCommand"`
-	Params         []Param   `json:"params"`
-	HealthType     string    `json:"healthType"`
-	HealthTarget   string    `json:"healthTarget"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	InstallCommand string `json:"installCommand"`
+	// UninstallCommand takes the app back off a host. Optional: an app that
+	// declares none can only be forgotten, never removed.
+	UninstallCommand string    `json:"uninstallCommand"`
+	Params           []Param   `json:"params"`
+	HealthType       string    `json:"healthType"`
+	HealthTarget     string    `json:"healthTarget"`
+	CreatedAt        time.Time `json:"createdAt"`
 	// SelfUpdate marks the app that installs Deployer itself. Deploying it to
 	// the home host restarts the process running the deployment, so it runs
 	// detached and is picked back up afterwards.
 	SelfUpdate bool `json:"selfUpdate"`
 }
 
-const appColumns = `id, name, description, install_command, params, health_type, health_target, created_at, self_update`
+const appColumns = `id, name, description, install_command, uninstall_command, params,
+	health_type, health_target, created_at, self_update`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
 	var params, created string
-	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.InstallCommand, &params,
-		&a.HealthType, &a.HealthTarget, &created, &a.SelfUpdate)
+	err := row.Scan(&a.ID, &a.Name, &a.Description, &a.InstallCommand, &a.UninstallCommand,
+		&params, &a.HealthType, &a.HealthTarget, &created, &a.SelfUpdate)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
@@ -100,9 +104,11 @@ func (d *DB) CreateApp(ctx context.Context, a *App) (*App, error) {
 		return nil, err
 	}
 	res, err := d.sql.ExecContext(ctx, `
-		INSERT INTO apps (name, description, install_command, params, health_type, health_target, self_update)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, a.Description, a.InstallCommand, string(params), a.HealthType, a.HealthTarget, a.SelfUpdate)
+		INSERT INTO apps (name, description, install_command, uninstall_command, params,
+			health_type, health_target, self_update)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, a.Description, a.InstallCommand, a.UninstallCommand, string(params),
+		a.HealthType, a.HealthTarget, a.SelfUpdate)
 	if err != nil {
 		return nil, err
 	}
@@ -120,17 +126,19 @@ func (d *DB) UpdateApp(ctx context.Context, a *App) error {
 		return err
 	}
 	res, err := d.sql.ExecContext(ctx, `
-		UPDATE apps SET name = ?, description = ?, install_command = ?, params = ?,
-			health_type = ?, health_target = ?
+		UPDATE apps SET name = ?, description = ?, install_command = ?, uninstall_command = ?,
+			params = ?, health_type = ?, health_target = ?
 		WHERE id = ?`,
-		a.Name, a.Description, a.InstallCommand, string(params), a.HealthType, a.HealthTarget, a.ID)
+		a.Name, a.Description, a.InstallCommand, a.UninstallCommand, string(params),
+		a.HealthType, a.HealthTarget, a.ID)
 	if err != nil {
 		return err
 	}
 	return requireRow(res)
 }
 
-// DeleteApp removes an app along with its deployments and installations.
+// DeleteApp removes an app along with its deployments and installations. It
+// does not uninstall anything on a host; see Runner.Uninstall for that.
 func (d *DB) DeleteApp(ctx context.Context, id int64) error {
 	res, err := d.sql.ExecContext(ctx, `DELETE FROM apps WHERE id = ?`, id)
 	if err != nil {

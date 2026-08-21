@@ -98,6 +98,12 @@ var migrations = []string{
 	// Where a detached deployment writes its output on the host. Non-empty
 	// means the command outlives Deployer and can be picked back up.
 	`ALTER TABLE deployments ADD COLUMN detached_log TEXT NOT NULL DEFAULT ''`,
+	// How an app takes itself back off a host. Optional: an app that does not
+	// say cannot be uninstalled, only forgotten.
+	`ALTER TABLE apps ADD COLUMN uninstall_command TEXT NOT NULL DEFAULT ''`,
+	// Which of an app's two commands a deployment ran. Everything recorded
+	// before this column existed was an install.
+	`ALTER TABLE deployments ADD COLUMN kind TEXT NOT NULL DEFAULT 'install'`,
 }
 
 // DB wraps the SQLite handle.

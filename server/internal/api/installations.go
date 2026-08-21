@@ -47,8 +47,24 @@ func (s *Server) handleGetInstallation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, in)
 }
 
-// handleForgetInstallation removes Deployer's record of an app on a host. The
-// app itself is left running; Deployer has no uninstall command to run.
+// handleUninstall takes an app off a host for real: it runs the app's uninstall
+// command there, streams the log the way a deploy does, and forgets the
+// installation once the command has succeeded. Forgetting without running
+// anything is the other endpoint, below.
+func (s *Server) handleUninstall(w http.ResponseWriter, r *http.Request) {
+	in, err := s.installationFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "uninstall")
+		return
+	}
+	dep, err := s.Runner.Uninstall(r.Context(), in.AppID, in.HostID)
+	s.writeStartedDeployment(w, dep, err)
+}
+
+// handleForgetInstallation removes Deployer's record of an app on a host and
+// nothing else. Whatever the app left on the machine stays there — which is
+// what you want for an app removed by hand, and what Uninstall is for
+// otherwise.
 func (s *Server) handleForgetInstallation(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {

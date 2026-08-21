@@ -15,6 +15,7 @@ export default function AppForm() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [installCommand, setInstallCommand] = useState('')
+  const [uninstallCommand, setUninstallCommand] = useState('')
   const [params, setParams] = useState<Param[]>([])
   const [healthType, setHealthType] = useState<HealthType>('none')
   const [healthTarget, setHealthTarget] = useState('')
@@ -30,6 +31,7 @@ export default function AppForm() {
         setName(app.name)
         setDescription(app.description)
         setInstallCommand(app.installCommand)
+        setUninstallCommand(app.uninstallCommand)
         setParams(app.params)
         setHealthType(app.healthType)
         setHealthTarget(app.healthTarget)
@@ -49,6 +51,7 @@ export default function AppForm() {
       name,
       description,
       installCommand,
+      uninstallCommand,
       // A parameter with no name is a row the user started and abandoned.
       params: params.filter((p) => p.name.trim() !== ''),
       healthType,
@@ -93,6 +96,19 @@ export default function AppForm() {
                 autoCorrect="off"
                 spellCheck={false}
                 required
+              />
+            </Field>
+            <Field
+              label="Uninstall command"
+              help="Optional. Runs the same way, with the parameters the install was given. Without one an app can only be forgotten, not removed from a host."
+            >
+              <textarea
+                value={uninstallCommand}
+                onChange={(e) => setUninstallCommand(e.target.value)}
+                placeholder="curl -fsSL https://raw.githubusercontent.com/chinmay28/countroster/main/scripts/quickstart.sh | sudo bash -s -- --uninstall"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
               />
             </Field>
           </Card>

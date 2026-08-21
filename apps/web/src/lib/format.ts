@@ -74,6 +74,18 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
+/**
+ * renderCommand fills {{name}} placeholders the way the server will, so a
+ * confirmation sheet shows exactly what is about to run rather than an
+ * approximation of it. A placeholder nothing answers is left as written — the
+ * server rejects it, and showing the raw braces is how that reads.
+ */
+export function renderCommand(template: string, values: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (match, name) =>
+    name in values ? shellQuote(values[name]) : match,
+  )
+}
+
 /** "port 8899", or "ports 8080, 8443" — and nothing at all when Deployer has
  *  no port to name, which reads better than an empty label. */
 export function ports(list: number[] | undefined): string {

@@ -384,6 +384,9 @@ export interface App {
   name: string
   description: string
   installCommand: string
+  /** How the app takes itself back off a host. Empty for an app that never
+   *  said, which can only be forgotten, never uninstalled. */
+  uninstallCommand: string
   params: Param[]
   healthType: HealthType
   healthTarget: string
@@ -394,12 +397,16 @@ export interface App {
 
 export type DeploymentStatus = 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
 
+/** Which of an app's two commands a run was. */
+export type DeploymentKind = 'install' | 'uninstall'
+
 export interface Deployment {
   id: number
   appId: number
   hostId: number
   command: string
   params: Record<string, string>
+  kind: DeploymentKind
   status: DeploymentStatus
   exitCode: number | null
   error: string
