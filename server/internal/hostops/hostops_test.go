@@ -224,6 +224,40 @@ func TestCleanPath(t *testing.T) {
 	}
 }
 
+// Only octal reaches chmod. Symbolic modes are not offered by the UI, and a
+// mode that is not digits is refused here rather than handed to a shell.
+func TestCleanMode(t *testing.T) {
+	ok := map[string]string{
+		"755":   "755",
+		" 644 ": "644",
+		"0644":  "0644",
+		"1777":  "1777",
+		"000":   "000",
+		"4755":  "4755",
+	}
+	for in, want := range ok {
+		got, err := CleanMode(in)
+		if err != nil {
+			t.Errorf("CleanMode(%q) failed: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("CleanMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+	bad := []string{"", "  ", "75", "75555", "u+x", "888", "7o5", "-rwxr-xr-x", "755;reboot", "0x1ff"}
+	for _, in := range bad {
+		got, err := CleanMode(in)
+		if err == nil {
+			t.Errorf("CleanMode(%q) = %q, want an error", in, got)
+			continue
+		}
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("CleanMode(%q) gave %v, want it recognisable as a bad request", in, err)
+		}
+	}
+}
+
 func TestIsBinary(t *testing.T) {
 	cases := []struct {
 		name string

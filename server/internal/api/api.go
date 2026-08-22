@@ -80,6 +80,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/hosts/{id}/files/content", s.handleWriteFile)
 	mux.HandleFunc("POST /api/hosts/{id}/files/mkdir", s.handleMkdir)
 	mux.HandleFunc("POST /api/hosts/{id}/files/rename", s.handleRenameFile)
+	mux.HandleFunc("POST /api/hosts/{id}/files/chmod", s.handleChmodFile)
 
 	mux.HandleFunc("GET /api/apps", s.handleListApps)
 	mux.HandleFunc("POST /api/apps", s.handleCreateApp)

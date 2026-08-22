@@ -1068,6 +1068,53 @@ button.block {
   color: var(--text);
 }
 
+/* ---------- permissions ---------- */
+
+/* chmod's three digits, drawn as what they are: a row per audience, a tap per
+   bit. Big targets, because this is the one screen where a mis-tap is the
+   difference between 640 and 644. */
+.perms {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.perm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.perm-who {
+  font-size: 14px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.perm-bits {
+  display: flex;
+  gap: 6px;
+}
+
+.perm-bit {
+  width: 44px;
+  min-height: 40px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 15px;
+  text-transform: none;
+}
+
+.perm-bit.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ---------- the text editor ---------- */
 
 /* Tall enough to be worth typing in on a phone, and never wrapped: a config

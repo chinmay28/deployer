@@ -258,6 +258,17 @@ and a failure part way through leaves the original alone. An existing file keeps
 its mode and its owner. A symlink is followed: editing `/etc/resolv.conf` edits
 what it points at rather than replacing the link.
 
+**Permissions** are set from the same sheet the rename and delete live on, laid
+out as the three-by-three grid the octal digits already are: a row per audience,
+a tap per bit, with the digits themselves still editable for anyone who arrived
+knowing they want 640. On a folder, *everything inside it too* is `chmod -R`,
+and it means what it says — the same mode reaches the files under it, not only
+the directories. That is what turns 755 into 777 in one go, and it is also how a
+folder of configs becomes a folder of executable configs, so it is off unless it
+is asked for and the sheet says so before it runs. A symlink has no permissions
+worth setting, so the mode goes to what it points at, the way editing one does.
+Only octal is accepted — `u+x` never reaches a shell — and `/` is refused.
+
 Two things are deliberately not editable. A file over 512 KB comes back
 truncated, and saving the part you can see would throw the rest away; a binary
 file is shown as binary rather than run through a textarea that would mangle it.
@@ -457,8 +468,8 @@ Deployer holds a key that can run commands as root on every host you add. Treat
 it accordingly:
 
 - **Keep it on your LAN or Tailscale network.** Don't expose it to the internet.
-- Anyone who can reach the UI can **browse and edit any file on every host**, as
-  root, and restart the machines. That follows from the key Deployer already
+- Anyone who can reach the UI can **browse, edit and re-permission any file on
+  every host**, as root, and restart the machines. That follows from the key Deployer already
   holds rather than adding to it, but it does put a root shell's reach behind a
   web page — which is the whole argument for the PIN and for the LAN.
 - It runs **unauthenticated by default**. Set a PIN with `-pin` /
@@ -600,6 +611,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `PUT`    | `/api/hosts/{id}/files/content`     | write a file, keeping mode and owner |
 | `POST`   | `/api/hosts/{id}/files/mkdir`       | create a directory                   |
 | `POST`   | `/api/hosts/{id}/files/rename`      | move a file, never over an existing one |
+| `POST`   | `/api/hosts/{id}/files/chmod`       | set the mode, `"recursive":true` for everything inside |
 | `GET`    | `/api/apps`                         | apps                                 |
 | `POST`   | `/api/apps`                         | add an app                           |
 | `GET`    | `/api/apps/{id}`                    | one app                              |

@@ -388,6 +388,61 @@ func (s *Service) Rename(ctx context.Context, h *store.Host, from, to string) er
 	return nil
 }
 
+// chmodScript changes a mode. A symlink is resolved first: a link's own bits
+// mean nothing on Linux, so chmod would act on what it points at whatever this
+// script did — resolving it makes that visible rather than surprising. The
+// recursive form is `chmod -R`, exactly as it reads: everything inside gets the
+// same mode, files included.
+const chmodScript = `set -u
+p=$1
+m=$2
+scope=$3
+if [ -L "$p" ]; then r=$(readlink -f -- "$p" 2>/dev/null || printf ''); [ -n "$r" ] && p=$r; fi
+case "$p" in /) printf 'refusing to change the mode of /\n' >&2; exit 2;; esac
+[ -e "$p" ] || { printf 'no such file: %s\n' "$p" >&2; exit 3; }
+if [ "$scope" = recursive ] && [ -d "$p" ]; then
+  chmod -R "$m" -- "$p" || exit 4
+else
+  chmod "$m" -- "$p" || exit 4
+fi
+printf '@@path\n%s\n' "$p"
+printf '@@mode\n%s\n' "$(stat -c %a -- "$p" 2>/dev/null || printf '')"
+`
+
+// Chmod sets the permission bits on a file or directory, and on everything
+// inside it when recursive is set. It answers with the mode the host reports
+// afterwards, which is the one worth showing: what was asked for and what took
+// effect are not always the same digits — a directory's mode read back through
+// stat drops a leading zero, and a filesystem mounted noexec has opinions.
+func (s *Service) Chmod(ctx context.Context, h *store.Host, target, mode string, recursive bool) (string, error) {
+	clean, err := CleanPath(target)
+	if err != nil {
+		return "", err
+	}
+	if clean == "/" {
+		return "", invalid("refusing to change the mode of /")
+	}
+	octal, err := CleanMode(mode)
+	if err != nil {
+		return "", err
+	}
+	scope := "single"
+	if recursive {
+		scope = "recursive"
+	}
+	res, err := s.run(ctx, h, elevate(chmodScript, clean, octal, scope), "")
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 {
+		return "", failure(res, "could not change the mode of "+clean)
+	}
+	if got := first(sections(res.Stdout)["mode"]); got != "" {
+		return got, nil
+	}
+	return octal, nil
+}
+
 // removeScript deletes one entry. A non-empty directory needs the caller to ask
 // for it explicitly — the difference between rmdir and rm -rf is the difference
 // between a typo and a bad afternoon.
@@ -449,6 +504,26 @@ func CleanPath(p string) (string, error) {
 		return "", invalid("the path contains a character that cannot be used")
 	}
 	return path.Clean(p), nil
+}
+
+// CleanMode checks a permission mode from the browser. Only octal is accepted —
+// three digits, or four where the first carries setuid, setgid or the sticky
+// bit. Symbolic modes like u+x are not offered by the UI, and refusing them
+// here means the digits handed to chmod can never be anything else.
+func CleanMode(mode string) (string, error) {
+	m := strings.TrimSpace(mode)
+	if m == "" {
+		return "", invalid("a mode is required, written in octal like 755")
+	}
+	if len(m) < 3 || len(m) > 4 {
+		return "", invalid("%q is not a mode: it is three octal digits, or four with a leading special bit", mode)
+	}
+	for _, d := range m {
+		if d < '0' || d > '7' {
+			return "", invalid("%q is not a mode: octal digits only, like 755 or 0644", mode)
+		}
+	}
+	return m, nil
 }
 
 // isBinary decides whether bytes are text a person can edit. A NUL byte settles

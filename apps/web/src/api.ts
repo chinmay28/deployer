@@ -159,6 +159,14 @@ export const api = {
     request<{ path: string }>(`/api/hosts/${id}/files/mkdir`, { method: 'POST', ...json({ path }) }),
   renameFile: (id: number, path: string, to: string) =>
     request<{ path: string }>(`/api/hosts/${id}/files/rename`, { method: 'POST', ...json({ path, to }) }),
+  /** Sets permission bits, octal as the listing shows them. Recursive gives a
+   *  directory and everything inside it the same mode. Answers with the mode
+   *  the host reports afterwards. */
+  chmod: (id: number, path: string, mode: string, recursive = false) =>
+    request<{ path: string; mode: string }>(`/api/hosts/${id}/files/chmod`, {
+      method: 'POST',
+      ...json({ path, mode, recursive }),
+    }),
   deleteFile: (id: number, path: string, recursive = false) =>
     request<void>(
       `/api/hosts/${id}/files?path=${encodeURIComponent(path)}${recursive ? '&recursive=true' : ''}`,

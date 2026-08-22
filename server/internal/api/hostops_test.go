@@ -35,6 +35,11 @@ func TestFileRequestsValidateThePath(t *testing.T) {
 		{"rename to a relative path", "POST", "/api/hosts/%d/files/rename", `{"path":"/tmp/a","to":"b"}`},
 		{"rename from nothing", "POST", "/api/hosts/%d/files/rename", `{"path":"","to":"/tmp/b"}`},
 		{"an unknown field", "POST", "/api/hosts/%d/files/mkdir", `{"path":"/tmp/x","mode":"755"}`},
+		{"chmod with a relative path", "POST", "/api/hosts/%d/files/chmod", `{"path":"tmp/x","mode":"755"}`},
+		{"chmod with no mode", "POST", "/api/hosts/%d/files/chmod", `{"path":"/tmp/x","mode":""}`},
+		{"chmod with a symbolic mode", "POST", "/api/hosts/%d/files/chmod", `{"path":"/tmp/x","mode":"u+x"}`},
+		{"chmod with a mode that is not octal", "POST", "/api/hosts/%d/files/chmod", `{"path":"/tmp/x","mode":"888"}`},
+		{"chmod with a mode carrying a command", "POST", "/api/hosts/%d/files/chmod", `{"path":"/tmp/x","mode":"755;reboot"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
