@@ -531,6 +531,57 @@ func (s *Server) handleRenameFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"path": to})
 }
 
+// recursiveChmodTimeout bounds a `chmod -R`. Walking a directory tree is work
+// the host does entry by entry, and on a Pi's SD card a deep one takes longer
+// than the ordinary limit allows — a request that timed out halfway would leave
+// half a tree changed and say nothing useful about which half.
+const recursiveChmodTimeout = 3 * time.Minute
+
+type chmodInput struct {
+	Path string `json:"path"`
+	// Mode is octal, as the listing shows it: "755", or "0644".
+	Mode string `json:"mode"`
+	// Recursive applies the mode to everything inside a directory too.
+	Recursive bool `json:"recursive"`
+}
+
+func (s *Server) handleChmodFile(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "change permissions")
+		return
+	}
+	var in chmodInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	clean, err := hostops.CleanPath(in.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	mode, err := hostops.CleanMode(in.Mode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	timeout := opTimeout
+	if in.Recursive {
+		timeout = recursiveChmodTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	got, err := s.Ops.Chmod(ctx, h, clean, mode, in.Recursive)
+	if err != nil {
+		s.writeOpError(w, err, "change permissions")
+		return
+	}
+	s.Log.Info("api: changed permissions", "host", h.Name, "path", clean, "mode", mode, "recursive", in.Recursive)
+	writeJSON(w, http.StatusOK, map[string]string{"path": clean, "mode": got})
+}
+
 func (s *Server) handleRemoveFile(w http.ResponseWriter, r *http.Request) {
 	h, err := s.hostFromPath(r)
 	if err != nil {

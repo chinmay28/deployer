@@ -211,7 +211,8 @@ function describe(entry: DirEntry): string {
   return parts.join(' · ')
 }
 
-/** EntrySheet is rename and delete, the two things worth doing from a phone. */
+/** EntrySheet is what can be done to one entry from a phone: change its
+ *  permissions, rename it, delete it. */
 function EntrySheet({
   hostId,
   dir,
@@ -227,6 +228,7 @@ function EntrySheet({
 }) {
   const path = join(dir, entry.name)
   const [renaming, setRenaming] = useState(false)
+  const [permissions, setPermissions] = useState(false)
   const [newName, setNewName] = useState(entry.name)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -270,7 +272,15 @@ function EntrySheet({
     <Sheet title={entry.name} subtitle={path} onClose={onClose}>
       {failure && <Banner tone="bad">{failure}</Banner>}
 
-      {renaming ? (
+      {permissions ? (
+        <Permissions
+          hostId={hostId}
+          entry={entry}
+          path={path}
+          onCancel={() => setPermissions(false)}
+          onDone={onDone}
+        />
+      ) : renaming ? (
         <>
           <Field label="New name">
             <input value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
@@ -322,6 +332,10 @@ function EntrySheet({
             {entry.group ? `:${entry.group}` : ''}
             {entry.type === 'file' ? ` · ${bytes(entry.size)}` : ''}
           </div>
+          <button className="secondary block" onClick={() => setPermissions(true)}>
+            Permissions
+          </button>
+          <div style={{ height: 10 }} />
           <button className="secondary block" onClick={() => setRenaming(true)}>
             Rename
           </button>
@@ -333,6 +347,178 @@ function EntrySheet({
       )}
     </Sheet>
   )
+}
+
+/**
+ * Permissions is chmod, laid out as the three-by-three grid the octal digits
+ * already are: who, then what they may do. The digits stay visible and stay
+ * editable, because someone who came here knowing they want 640 should not have
+ * to find it by tapping.
+ *
+ * On a folder, "everything inside it too" is `chmod -R`, and it means what it
+ * says: the same mode reaches the files as well as the directories under it.
+ * That is what makes 755 into 777 in one go, and it is also how a folder full
+ * of configs becomes a folder full of executable configs, so it is off unless
+ * it is asked for and the sheet says what it will do.
+ */
+function Permissions({
+  hostId,
+  entry,
+  path,
+  onCancel,
+  onDone,
+}: {
+  hostId: number
+  entry: DirEntry
+  path: string
+  onCancel: () => void
+  onDone: (message: string) => void
+}) {
+  const [mode, setMode] = useState(() => normalizeMode(entry.mode, isDirectory(entry)))
+  const [deep, setDeep] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+
+  const folder = isDirectory(entry)
+  const valid = /^[0-7]{3,4}$/.test(mode)
+  // A four-digit mode carries setuid, setgid or the sticky bit in front. The
+  // grid cannot show it, so it is named rather than silently carried along.
+  const special = mode.length === 4 ? mode[0] : ''
+  const bits = mode.slice(-3)
+
+  const toggle = (who: number, bit: number) => {
+    const digits = bits.split('')
+    const value = Number(digits[who] ?? 0) ^ bit
+    digits[who] = String(value)
+    setMode(special + digits.join(''))
+  }
+
+  const apply = async () => {
+    setBusy(true)
+    setFailure(null)
+    try {
+      const result = await api.chmod(hostId, path, mode, folder && deep)
+      onDone(
+        folder && deep
+          ? `${entry.name} and everything inside it are now ${result.mode}.`
+          : `${entry.name} is now ${result.mode}.`,
+      )
+    } catch (e) {
+      setFailure(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      {failure && <Banner tone="bad">{failure}</Banner>}
+      {entry.type === 'link' && (
+        <Banner tone="warn">
+          This is a symlink. Its own permissions mean nothing, so the mode goes to{' '}
+          {entry.target} instead.
+        </Banner>
+      )}
+
+      <div className="perms">
+        {WHO.map((who, i) => (
+          <div className="perm-row" key={who.key}>
+            <span className="perm-who">{who.label}</span>
+            <div className="perm-bits">
+              {BITS.map((bit) => {
+                const on = (Number(bits[i] ?? 0) & bit.value) !== 0
+                return (
+                  <button
+                    key={bit.key}
+                    className={`perm-bit ${on ? 'on' : ''}`}
+                    aria-pressed={on}
+                    aria-label={`${bit.label} for ${who.label}`}
+                    onClick={() => toggle(i, bit.value)}
+                    disabled={!valid}
+                  >
+                    {bit.key}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Field
+        label="Mode"
+        help={valid ? symbolic(bits) : 'Three octal digits, or four with a special bit.'}
+      >
+        <input
+          value={mode}
+          inputMode="numeric"
+          maxLength={4}
+          onChange={(e) => setMode(e.target.value.replace(/[^0-7]/g, '').slice(0, 4))}
+          aria-label="Mode in octal"
+        />
+      </Field>
+
+      {special && special !== '0' && (
+        <p className="sub">
+          The leading {special} is a setuid, setgid or sticky bit. It stays unless you edit the
+          digits yourself.
+        </p>
+      )}
+
+      {folder && (
+        <label className="checkbox">
+          <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
+          Everything inside it too
+        </label>
+      )}
+      {folder && deep && (
+        <Banner tone="warn">
+          Every file under {entry.name} gets {mode} as well, not just the folders.
+        </Banner>
+      )}
+
+      <div className="actions">
+        <button className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="primary" onClick={apply} disabled={busy || !valid}>
+          {busy ? 'Applying…' : 'Apply'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+const WHO = [
+  { key: 'owner', label: 'Owner' },
+  { key: 'group', label: 'Group' },
+  { key: 'others', label: 'Others' },
+]
+
+const BITS = [
+  { key: 'r', label: 'read', value: 4 },
+  { key: 'w', label: 'write', value: 2 },
+  { key: 'x', label: 'execute', value: 1 },
+]
+
+/** normalizeMode makes what the host reported into digits the grid can edit,
+ *  falling back to the usual mode for the kind of thing it is where the host
+ *  said nothing — a blank grid would read as "no permissions at all". */
+function normalizeMode(mode: string, folder: boolean): string {
+  const digits = (mode ?? '').replace(/[^0-7]/g, '').slice(-4)
+  if (digits.length < 3) return folder ? '755' : '644'
+  return digits
+}
+
+/** symbolic turns 755 into rwxr-xr-x, the form the same bits are read in. */
+function symbolic(bits: string): string {
+  return bits
+    .split('')
+    .map((digit) => {
+      const value = Number(digit)
+      return BITS.map((bit) => ((value & bit.value) !== 0 ? bit.key : '-')).join('')
+    })
+    .join('')
 }
 
 /** CreateSheet makes an empty file or a folder here. A new file opens straight

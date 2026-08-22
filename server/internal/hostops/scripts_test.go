@@ -544,3 +544,138 @@ func TestRemoveScriptDoesNotFollowSymlinks(t *testing.T) {
 		t.Errorf("what the link pointed at was removed too: %v", err)
 	}
 }
+
+// chmodOut runs the chmod script and returns the mode the host reported.
+func chmodOut(t *testing.T, target, mode, scope string) (string, int) {
+	t.Helper()
+	out, code := runScript(t, asUser(chmodScript, target, mode, scope), "")
+	return first(sections(out)["mode"]), code
+}
+
+func modeOf(t *testing.T, p string) string {
+	t.Helper()
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%o", info.Mode().Perm())
+}
+
+func TestChmodScript(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "app.conf")
+	if err := os.WriteFile(file, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, code := chmodOut(t, file, "644", "single")
+	if code != 0 {
+		t.Fatalf("chmod exited %d", code)
+	}
+	if got != "644" {
+		t.Errorf("reported mode %q, want the one the host read back (644)", got)
+	}
+	if on := modeOf(t, file); on != "644" {
+		t.Errorf("on disk = %s, want 644", on)
+	}
+
+	// The four-digit form carries the sticky and setgid bits through.
+	if _, code := chmodOut(t, dir, "1755", "single"); code != 0 {
+		t.Fatalf("chmod with a special bit exited %d", code)
+	}
+	if info, err := os.Stat(dir); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&os.ModeSticky == 0 {
+		t.Errorf("mode = %v, want the sticky bit set", info.Mode())
+	}
+}
+
+// The difference between one directory and everything under it is the whole
+// point of the recursive flag, so both are proven rather than assumed.
+func TestChmodScriptRecursive(t *testing.T) {
+	dir := t.TempDir()
+	inner := filepath.Join(dir, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deep := filepath.Join(inner, "deep.conf")
+	if err := os.WriteFile(deep, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(deep, 0o600); err != nil { // umask does not apply to Chmod
+		t.Fatal(err)
+	}
+
+	if _, code := chmodOut(t, dir, "750", "single"); code != 0 {
+		t.Fatalf("chmod exited %d", code)
+	}
+	if on := modeOf(t, dir); on != "750" {
+		t.Errorf("the directory is %s, want 750", on)
+	}
+	if on := modeOf(t, deep); on != "600" {
+		t.Errorf("a file inside became %s, want 600 — one directory means one directory", on)
+	}
+
+	if _, code := chmodOut(t, dir, "777", "recursive"); code != 0 {
+		t.Fatalf("recursive chmod exited %d", code)
+	}
+	for _, p := range []string{dir, inner, deep} {
+		if on := modeOf(t, p); on != "777" {
+			t.Errorf("%s is %s, want 777 all the way down", p, on)
+		}
+	}
+}
+
+// A symlink's own bits mean nothing, so the mode has to reach what it points at
+// — and the script says which path that was.
+func TestChmodScriptFollowsSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.conf")
+	if err := os.WriteFile(target, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.conf")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runScript(t, asUser(chmodScript, link, "640", "single"), "")
+	if code != 0 {
+		t.Fatalf("chmod through a symlink exited %d", code)
+	}
+	if got := first(sections(out)["path"]); got != target {
+		t.Errorf("path = %q, want the file it resolved to (%q)", got, target)
+	}
+	if on := modeOf(t, target); on != "640" {
+		t.Errorf("the target is %s, want 640", on)
+	}
+}
+
+// A recursive chmod walks the tree it was given and no further: a symlink
+// inside it is not a way out into the rest of the filesystem.
+func TestChmodScriptRecursiveDoesNotEscapeThroughSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.conf")
+	if err := os.WriteFile(outside, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := chmodOut(t, dir, "777", "recursive"); code != 0 {
+		t.Fatalf("recursive chmod exited %d", code)
+	}
+	if on := modeOf(t, outside); on != "600" {
+		t.Errorf("a file outside the tree became %s, want it left at 600", on)
+	}
+}
+
+func TestChmodScriptRefusesRootAndTheAbsent(t *testing.T) {
+	if _, code := chmodOut(t, "/", "777", "recursive"); code != 2 {
+		t.Fatalf("chmod on / exited %d, want a refusal (2)", code)
+	}
+	if _, code := chmodOut(t, "/no/such/thing", "644", "single"); code != 3 {
+		t.Errorf("chmod on something absent exited %d, want 3", code)
+	}
+}

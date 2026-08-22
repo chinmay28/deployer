@@ -99,6 +99,29 @@ func TestFilesOverSSH(t *testing.T) {
 		t.Errorf("path = %q, want %q", listing.Path, dir)
 	}
 
+	// Changing the mode, first on the file and then on the directory with
+	// everything under it, through the same connection path.
+	mode, err := svc.Chmod(ctx, host, path, "600", false)
+	if err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	if mode != "600" {
+		t.Errorf("mode = %q, want the 600 the host read back", mode)
+	}
+	if _, err := svc.Chmod(ctx, host, dir, "777", true); err != nil {
+		t.Fatalf("recursive Chmod: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o777 {
+		t.Errorf("the file inside is %o, want 777 — recursive means the contents too", got)
+	}
+	if _, err := svc.Chmod(ctx, host, path, "u+x", false); err == nil {
+		t.Error("a symbolic mode was accepted, want it refused before anything is sent")
+	}
+
 	// Renaming, then deleting through the same connection path.
 	moved := filepath.Join(dir, "renamed.conf")
 	if err := svc.Rename(ctx, host, path, moved); err != nil {
