@@ -309,10 +309,19 @@ function Absent({
       )}
       {session.snapBrowser && (
         <p className="sub">
-          The {session.snapBrowser} here is a snap, which cannot run in a session like this — it is
-          walled out of the browser profile, and a service has no runtime directory for snapd to
-          work in. Setting up fetches a browser that is an ordinary package instead.
+          The {session.snapBrowser} here is a snap, or a wrapper for one, and cannot run in a
+          session like this — it is walled out of the browser profile, and a service has no runtime
+          directory for snapd to work in.
         </p>
+      )}
+      {session.brokenBrowser && (
+        <p className="sub">
+          The {session.brokenBrowser} here is installed and will not run: it cannot report even its
+          own version.
+        </p>
+      )}
+      {(session.snapBrowser || session.brokenBrowser) && (
+        <p className="sub">Setting up fetches a browser that is an ordinary package instead.</p>
       )}
       {!sudo && (
         <Banner tone="warn">

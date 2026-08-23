@@ -405,18 +405,26 @@ first runs, so a download needs no dialog: it goes straight to
 `~/Downloads`, which the same screen then lists, newest first, with a way
 through to the file browser.
 
-**A browser that is really a snap is not a browser this can use.** Ubuntu ships
-both chromium and firefox that way, and `apt install chromium` there quietly
-installs the snap — which fails on the spot in a session like this, printing
+**A browser that cannot say its own version is not a browser this can use.**
+Ubuntu ships both chromium and firefox as snaps, and `apt install chromium` there
+quietly installs one — which fails on the spot in a session like this, printing
 nothing: snap confinement walls the browser out of the hidden profile directory
 in the home it is otherwise allowed into, and a system service has no user
-runtime directory for snapd to work in. So a browser whose path resolves into
-`/snap` is skipped rather than run, on a host with nothing else the setup fetches
-Chrome as an ordinary package (which adds Google's repository itself, so it keeps
-updating like everything else), and the screen names the snap rather than
-reporting a browser that looks installed and cannot start. On an architecture
-with no package build of a browser, setup says that instead of installing
-something that will not run.
+runtime directory for snapd to work in. A path that resolves into `/snap` is the
+obvious form of that and is skipped. The less obvious one is
+`/usr/bin/chromium-browser`, which is not a symlink into `/snap` at all but a
+shell script that calls out to it, so the file is read rather than trusted.
+
+Neither check would catch the next thing, so there is a third that catches all
+of them: the browser is asked its version, and one that cannot answer — a
+wrapper for something that is not installed, a missing library, a half-finished
+package — is not going to render a page either. Where nothing on the host can
+answer, setup fetches Chrome as an ordinary package, which adds Google's
+repository itself and so keeps updating like everything else. The screen names
+what it found and why it was no good, because "no browser" and "a browser that
+looks installed and will not start" are fixed by different things. On an
+architecture with no package build of a browser, setup says that instead of
+installing something that cannot run.
 
 **A host that will not give the browser a sandbox gets a session without one
 rather than no session at all.** Chromium refuses to start where the kernel

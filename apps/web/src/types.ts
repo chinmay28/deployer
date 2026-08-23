@@ -413,6 +413,9 @@ export interface RemoteSession {
    *  confinement walls them out of the profile directory. Naming them is what
    *  tells "no browser" apart from "one that looks installed and cannot run". */
   snapBrowser?: string
+  /** Browsers that are installed here and will not run — they cannot report
+   *  even their own version. Same fix as a snap, different sentence. */
+  brokenBrowser?: string
   /** True where the browser here runs without its own sandbox, because this
    *  host would not give it one. A weaker browser than the phone's, and worth
    *  saying so on the screen rather than only in the journal. */

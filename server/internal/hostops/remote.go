@@ -119,6 +119,10 @@ type RemoteSession struct {
 	// use here. It is the difference between "no browser" and "a browser that
 	// looks installed and cannot run", which are fixed by different things.
 	SnapBrowser string `json:"snapBrowser,omitempty"`
+	// BrokenBrowser names browsers that are installed and will not run — they
+	// cannot even report their own version. Same fix as a snap, different
+	// sentence, and a host deserves to be told which it has.
+	BrokenBrowser string `json:"brokenBrowser,omitempty"`
 	// NoSandbox reports a browser running here without its own sandbox, because
 	// this host would not give it one. It is a weaker browser than the one on
 	// the phone, and whoever signs into something with it should be told.
@@ -166,6 +170,63 @@ var geometryPattern = regexp.MustCompile(`^([0-9]{3,4})x([0-9]{3,4})$`)
 // the end is the part worth reading.
 const MaxRemoteLogBytes = 16 << 10
 
+// remotePickBrowser is the same question asked in three places — the installer,
+// the session and the status probe — so it is written once and rendered into
+// each of them. It sets three variables rather than printing, because a command
+// substitution would run it in a subshell and lose the two that say why a
+// browser was turned down.
+//
+// Three things disqualify a browser, and the last one is the only rule that
+// catches everything:
+//
+//   - a path that resolves into /snap. Snap confinement walls a browser out of
+//     the hidden profile directory in the home it is otherwise allowed into,
+//     and a system service has no user runtime directory for snapd to work in.
+//
+//   - a wrapper script that calls out to a snap. Ubuntu's chromium-browser is
+//     exactly this and is not a symlink into /snap, so the path alone does not
+//     give it away — it has to be read.
+//
+//   - not being able to say its own version. Whatever the reason — a wrapper
+//     for something that is not installed, a missing library, a half-finished
+//     package — a browser that cannot answer that is not going to render a
+//     page either, and asking costs one exec.
+const remotePickBrowser = `pick_browser() {
+  browser=""
+  snap_browsers=""
+  broken_browsers=""
+  for b in %s; do
+    p=$(command -v "$b" 2>/dev/null) || continue
+    [ -n "$p" ] || continue
+    real=$(readlink -f "$p" 2>/dev/null) || real="$p"
+    case "$p$real" in
+      */snap/*)
+        snap_browsers="${snap_browsers:+$snap_browsers }$b"
+        continue
+        ;;
+    esac
+    if [ "$(head -c 2 "$real" 2>/dev/null)" = '#!' ] && grep -qi snap "$real" 2>/dev/null; then
+      snap_browsers="${snap_browsers:+$snap_browsers }$b"
+      continue
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 20 "$b" --version >/dev/null 2>&1 || {
+        broken_browsers="${broken_browsers:+$broken_browsers }$b"
+        continue
+      }
+    else
+      "$b" --version >/dev/null 2>&1 || {
+        broken_browsers="${broken_browsers:+$broken_browsers }$b"
+        continue
+      }
+    fi
+    browser="$b"
+    return 0
+  done
+  return 1
+}
+`
+
 // remoteStatusScript answers everything about a session in one round trip:
 // where setup got to, which pieces are installed, what the settings say, what
 // systemd makes of the unit, and what is in the downloads directory.
@@ -174,6 +235,7 @@ const MaxRemoteLogBytes = 16 << 10
 const remoteStatusScript = `set -u
 r=$1
 u=$2
+%[2]s
 etc="$r` + remoteConfDir + `"
 
 printf '@@state\n'
@@ -183,7 +245,7 @@ printf '@@logsize\n'
 wc -c < "$etc/setup.log" 2>/dev/null || printf '0\n'
 
 printf '@@log\n'
-tail -c %d "$etc/setup.log" 2>/dev/null | base64 2>/dev/null
+tail -c %[1]d "$etc/setup.log" 2>/dev/null | base64 2>/dev/null
 
 printf '@@config\n'
 cat "$etc/config" 2>/dev/null
@@ -198,22 +260,18 @@ printf '@@degraded\n'
 cat "$etc/degraded" 2>/dev/null
 
 printf '@@have\n'
-snap=""
-for b in %s; do
-  p=$(command -v "$b" 2>/dev/null) || continue
-  [ -n "$p" ] || continue
-  real=$(readlink -f "$p" 2>/dev/null) || real="$p"
-  case "$p$real" in
-    */snap/*) snap="${snap:+$snap }$b"; continue ;;
-  esac
-  printf '%%s\n' "$b"
+for b in %[4]s; do
+  command -v "$b" >/dev/null 2>&1 && printf '%%s\n' "$b"
 done
+pick_browser || true
+[ -n "$browser" ] && printf '%%s\n' "$browser"
 
-printf '@@snap\n%%s\n' "$snap"
+printf '@@snap\n%%s\n' "$snap_browsers"
+printf '@@broken\n%%s\n' "$broken_browsers"
 
 printf '@@unit\n'
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl show --no-pager -p LoadState -p ActiveState -p SubState -- %s 2>/dev/null
+  systemctl show --no-pager -p LoadState -p ActiveState -p SubState -- %[3]s 2>/dev/null
 fi
 
 home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
@@ -243,7 +301,7 @@ exit 0
 // settings are, and whether it is running.
 func (s *Service) RemoteStatus(ctx context.Context, h *store.Host) (*RemoteSession, error) {
 	script := fmt.Sprintf(remoteStatusScript,
-		MaxRemoteLogBytes, strings.Join(remoteBrowsersAndPieces(), " "), RemoteUnit)
+		MaxRemoteLogBytes, pickBrowserScript(), RemoteUnit, strings.Join(remotePieces, " "))
 	res, err := s.run(ctx, h, elevate(script, "", h.Username), "")
 	if err != nil {
 		return nil, err
@@ -254,10 +312,9 @@ func (s *Service) RemoteStatus(ctx context.Context, h *store.Host) (*RemoteSessi
 	return parseRemoteStatus(res.Stdout, h.Username), nil
 }
 
-// remoteBrowsersAndPieces is what the status script looks for on the PATH: the
-// programs a session is made of, and every browser it would be willing to run.
-func remoteBrowsersAndPieces() []string {
-	return append(append([]string{}, remotePieces...), remoteBrowsers...)
+// pickBrowserScript renders the shared browser rule for a script to embed.
+func pickBrowserScript() string {
+	return fmt.Sprintf(remotePickBrowser, strings.Join(remoteBrowsers, " "))
 }
 
 // parseRemoteStatus turns the script's output into the one answer the screen
@@ -320,6 +377,7 @@ func parseRemoteStatus(out, user string) *RemoteSession {
 	session.Homepage = first(found["homepage"])
 	session.NoSandbox = first(found["degraded"]) == "no-sandbox"
 	session.SnapBrowser = first(found["snap"])
+	session.BrokenBrowser = first(found["broken"])
 
 	have := map[string]bool{}
 	for _, line := range found["have"] {
@@ -518,66 +576,34 @@ printf '== updating the package list\n'
 apt-get update || exit 10
 
 printf '== installing the virtual screen, the VNC server and noVNC\n'
-apt-get install -y xvfb x11vnc novnc websockify curl || exit 11
+apt-get install -y xvfb x11vnc novnc websockify curl xdg-utils || exit 11
 
 printf '== installing a window manager\n'
 apt-get install -y openbox || printf 'openbox is not available here; dialogs will be unmanaged\n'
 
 printf '== looking for a browser\n'
-# A browser that is really a snap is not a browser Deployer can use. Ubuntu
-# ships chromium and firefox that way, and snap confinement is what makes them
-# unusable in a session like this: the browser is walled out of a hidden profile
-# directory in the home it is otherwise allowed into, and a system service has
-# no user runtime directory for snapd to work in. It fails on the spot with
-# nothing on stdout, which is the least helpful way anything can fail.
-package_browser() {
-  for b in %[2]s; do
-    p=$(command -v "$b" 2>/dev/null) || continue
-    [ -n "$p" ] || continue
-    real=$(readlink -f "$p" 2>/dev/null) || real="$p"
-    case "$p$real" in
-      */snap/*) continue ;;
-    esac
-    printf '%%s\n' "$b"
-    return 0
-  done
-  return 1
-}
-
-browser=$(package_browser) || browser=""
+%[3]s
+pick_browser || true
 if [ -z "$browser" ]; then
   printf '== installing a browser\n'
   apt-get install -y chromium || apt-get install -y chromium-browser || apt-get install -y firefox-esr || true
-  browser=$(package_browser) || browser=""
+  pick_browser || true
 fi
 
-snap_browsers() {
-  found=""
-  for b in %[2]s; do
-    p=$(command -v "$b" 2>/dev/null) || continue
-    [ -n "$p" ] || continue
-    real=$(readlink -f "$p" 2>/dev/null) || real="$p"
-    case "$p$real" in
-      */snap/*) found="${found:+$found }$b" ;;
-    esac
-  done
-  printf '%%s\n' "$found"
-}
-
 if [ -z "$browser" ]; then
-  # Nothing usable came out of apt. Google publishes Chrome as an ordinary
+  # Nothing apt offers here can run. Google publishes Chrome as an ordinary
   # package, and taking the .deb directly is the shortest way to a browser that
-  # runs — it adds Google's repository itself, so it keeps updating like
+  # does — it adds Google's repository itself, so it keeps updating like
   # anything else installed here.
-  snaps=$(snap_browsers)
   arch=$(dpkg --print-architecture 2>/dev/null || echo unknown)
   if [ "$arch" != amd64 ]; then
-    printf 'this host offers no browser that is a package%%s, and Chrome has no package build for %%s\n' \
-      "${snaps:+ (only the snaps: $snaps)}" "$arch" >&2
+    printf 'no browser here can run%%s%%s, and Chrome has no package build for %%s\n' \
+      "${snap_browsers:+ (snaps: $snap_browsers)}" "${broken_browsers:+ (will not start: $broken_browsers)}" "$arch" >&2
     exit 15
   fi
-  if [ -n "$snaps" ]; then
-    printf '== the browsers here are snaps (%%s), which cannot run in a session; fetching Chrome as a package instead\n' "$snaps"
+  if [ -n "$snap_browsers" ] || [ -n "$broken_browsers" ]; then
+    printf '== no browser here can run%%s%%s; fetching Chrome as a package instead\n' \
+      "${snap_browsers:+ — snaps: $snap_browsers}" "${broken_browsers:+ — will not start: $broken_browsers}"
   else
     printf '== apt installed no browser; fetching Chrome as a package instead\n'
   fi
@@ -589,7 +615,7 @@ if [ -z "$browser" ]; then
   fi
   apt-get install -y "$deb" || { rm -f "$deb"; exit 17; }
   rm -f "$deb"
-  browser=$(package_browser) || { printf 'Chrome installed but is not on the PATH\n' >&2; exit 18; }
+  pick_browser || { printf 'Chrome installed but will not run\n' >&2; exit 18; }
 fi
 printf '== the session will run %%s\n' "$browser"
 
@@ -682,27 +708,12 @@ else
   websockify "$web" "localhost:$vnc" &
 fi
 
-# A browser that is really a snap is not a browser Deployer can use. Ubuntu
-# ships chromium and firefox that way, and snap confinement is what makes them
-# unusable in a session like this: the browser is walled out of a hidden profile
-# directory in the home it is otherwise allowed into, and a system service has
-# no user runtime directory for snapd to work in. It fails on the spot with
-# nothing on stdout, which is the least helpful way anything can fail.
-browser=""
-snap=""
-for b in %s; do
-  p=$(command -v "$b" 2>/dev/null) || continue
-  [ -n "$p" ] || continue
-  real=$(readlink -f "$p" 2>/dev/null) || real="$p"
-  case "$p$real" in
-    */snap/*) snap="${snap:+$snap }$b"; continue ;;
-  esac
-  browser="$b"
-  break
-done
+%[1]s
+pick_browser || true
 if [ -z "$browser" ]; then
-  if [ -n "$snap" ]; then
-    printf 'deployer-remote: the only browser here is a snap (%%s), which cannot run in this session\n' "$snap"
+  if [ -n "$snap_browsers" ] || [ -n "$broken_browsers" ]; then
+    printf 'deployer-remote: no browser here can run%%s%%s\n' \
+      "${snap_browsers:+ — snaps: $snap_browsers}" "${broken_browsers:+ — will not start: $broken_browsers}"
     printf 'deployer-remote: set the session up again — Deployer will fetch one that is a package\n'
     exit 4
   fi
@@ -810,8 +821,8 @@ wait
 func renderRemoteSetup() string {
 	return fmt.Sprintf(remoteSetupScript,
 		remoteConfDir, remoteLibDir,
-		fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
-		fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
+		fmt.Sprintf(remoteSessionScript, pickBrowserScript()),
+		fmt.Sprintf(remoteInstallScript, remoteConfDir, "", pickBrowserScript()),
 		remoteDisplay, remoteVNCPort, RemoteUnit)
 }
 

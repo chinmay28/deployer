@@ -45,6 +45,16 @@ func rootStubs(extra map[string]string) map[string]string {
 	return stubs
 }
 
+// sessionScript and installScript are the two generated scripts as a host gets
+// them, which is what the tests run.
+func sessionScript() string {
+	return fmt.Sprintf(remoteSessionScript, pickBrowserScript())
+}
+
+func installScript() string {
+	return fmt.Sprintf(remoteInstallScript, remoteConfDir, "", pickBrowserScript())
+}
+
 func setupScriptFor(root, user, geometry, port, page, reset string) string {
 	return asUser(renderRemoteSetup(), root, user, geometry, port, page, reset, remoteRevision())
 }
@@ -77,13 +87,12 @@ func read(t *testing.T, path string) string {
 // a syntax error would only show up as a session that will not start.
 func TestGeneratedScriptsParse(t *testing.T) {
 	scripts := map[string]string{
-		"session": fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
-		"install": fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
+		"session": sessionScript(),
+		"install": installScript(),
 		"setup":   renderRemoteSetup(),
-		"status": fmt.Sprintf(remoteStatusScript, MaxRemoteLogBytes,
-			strings.Join(remoteBrowsersAndPieces(), " "), RemoteUnit),
-		"start":  fmt.Sprintf(remoteStartScript, remoteConfDir, RemoteUnit),
-		"remove": fmt.Sprintf(remoteRemoveScript, remoteConfDir, remoteLibDir, RemoteUnit),
+		"status":  statusScript(),
+		"start":   fmt.Sprintf(remoteStartScript, remoteConfDir, RemoteUnit),
+		"remove":  fmt.Sprintf(remoteRemoveScript, remoteConfDir, remoteLibDir, RemoteUnit),
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
@@ -199,8 +208,7 @@ func TestSetupScriptNeedsRoot(t *testing.T) {
 }
 
 func installScriptFor(root, user, reset string) string {
-	return asUser(fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
-		root, user, reset)
+	return asUser(installScript(), root, user, reset)
 }
 
 // The installer is the half that takes minutes. It reports where it got to
@@ -280,8 +288,8 @@ func TestInstallScriptRecordsAFailure(t *testing.T) {
 }
 
 func statusScript() string {
-	return fmt.Sprintf(remoteStatusScript, MaxRemoteLogBytes,
-		strings.Join(remoteBrowsersAndPieces(), " "), RemoteUnit)
+	return fmt.Sprintf(remoteStatusScript, MaxRemoteLogBytes, pickBrowserScript(),
+		RemoteUnit, strings.Join(remotePieces, " "))
 }
 
 // Status is one round trip that has to answer for a host in any state, starting
@@ -537,7 +545,7 @@ func TestRemoveScriptLeavesTheDownloadsAndTakesTheProfileOnlyWhenAsked(t *testin
 // here rather than run — starting an X server in a unit test would be testing
 // Xvfb — but the parts Deployer got to choose are worth asserting.
 func TestSessionScriptChoosesSafeDefaults(t *testing.T) {
-	script := fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " "))
+	script := sessionScript()
 	for _, want := range []string{
 		// The VNC server never listens on the network: the gateway is the only
 		// way in, and it is the port Deployer's link points at.
@@ -689,13 +697,17 @@ func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
 		"Xvfb":       `sleep 30`,
 		"x11vnc":     `sleep 30`,
 		"websockify": `sleep 30`,
-		// The failure a real Chromium reports when it cannot use its profile —
-		// on stderr, which is the stream that used to be thrown away.
-		"chromium": `printf 'The profile appears to be in use by another Chromium process\n' >&2; exit 1`,
+		// A browser that answers --version and then dies when it tries to open
+		// a window, which is how a real one fails. The message is the one
+		// Chromium gives when it cannot use its profile, on stderr — the
+		// stream that used to be thrown away.
+		"chromium": `[ "$1" = --version ] && { echo 'Chromium 120.0.0.0'; exit 0; }
+printf 'The profile appears to be in use by another Chromium process\n' >&2
+exit 1`,
 	})
 
 	script := filepath.Join(root, "session.sh")
-	if err := os.WriteFile(script, []byte(fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " "))), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(sessionScript()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// It runs until it is stopped, the way systemd runs it, so the test stops it.
@@ -839,7 +851,7 @@ func TestSessionScriptWillNotRunASnapBrowser(t *testing.T) {
 	}
 
 	script := filepath.Join(root, "session.sh")
-	if err := os.WriteFile(script, []byte(fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " "))), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte(sessionScript()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	run := exec.Command("timeout", "8", "sh", script, "1280x800", display, "5999", "6080",
@@ -848,7 +860,7 @@ func TestSessionScriptWillNotRunASnapBrowser(t *testing.T) {
 	out, err := run.CombinedOutput()
 	log := string(out)
 
-	if !strings.Contains(log, "the only browser here is a snap") {
+	if !strings.Contains(log, "no browser here can run — snaps: chromium") {
 		t.Errorf("a snap browser should be named as the problem:\n%s", log)
 	}
 	// Refusing is only half of it: the next step has to be on the screen too.
@@ -917,7 +929,7 @@ func TestInstallScriptFetchesAPackageBrowserWhereOnlySnapsExist(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("install exited %d: %s", code, out)
 	}
-	if !strings.Contains(out, "the browsers here are snaps") {
+	if !strings.Contains(out, "no browser here can run — snaps: chromium") {
 		t.Errorf("the log should say why it went and got one:\n%s", out)
 	}
 	if !strings.Contains(out, "the session will run google-chrome") {
@@ -926,4 +938,51 @@ func TestInstallScriptFetchesAPackageBrowserWhereOnlySnapsExist(t *testing.T) {
 	if got := strings.TrimSpace(read(t, filepath.Join(root, remoteConfDir, "setup.state"))); got != "ok" {
 		t.Errorf("state is %q, want ok", got)
 	}
+}
+
+// Ubuntu's chromium-browser is not a symlink into /snap: it is a shell script
+// that calls out to one, and it announces itself by failing on a line about
+// xdg-settings. The path alone does not give it away, so the file is read — and
+// whatever the file says, a browser that cannot report its own version is not
+// one this can use.
+func TestBrowserRuleRejectsASnapWrapperAndAnythingThatWillNotRun(t *testing.T) {
+	bin := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// What Ubuntu leaves at /usr/bin/chromium-browser.
+	write("chromium-browser", "#!/bin/sh\n# redirect to the snap\nexec snap run chromium \"$@\"\n")
+	// A browser that is on the PATH and cannot answer for itself. It comes
+	// before the working one in the list, or the rule would stop before
+	// reaching it — which is itself the right behaviour.
+	write("chromium", "#!/bin/sh\nexit 127\n")
+	// And one that works.
+	write("google-chrome", "#!/bin/sh\n[ \"$1\" = --version ] && echo 'Google Chrome 128.0'\nexit 0\n")
+
+	script := pickBrowserScript() + `
+pick_browser || true
+printf 'browser=%s\n' "$browser"
+printf 'snaps=%s\n' "$snap_browsers"
+printf 'broken=%s\n' "$broken_browsers"
+`
+	out, code := runScript(t, "sh -c "+shellQuoteForTest(script), "", bin)
+	if code != 0 {
+		t.Fatalf("the rule exited %d: %s", code, out)
+	}
+	if !strings.Contains(out, "browser=google-chrome") {
+		t.Errorf("want the one that runs to be chosen:\n%s", out)
+	}
+	if !strings.Contains(out, "snaps=chromium-browser") {
+		t.Errorf("the wrapper script should be read and recognised:\n%s", out)
+	}
+	if !strings.Contains(out, "broken=chromium") {
+		t.Errorf("a browser that cannot say its version should be named:\n%s", out)
+	}
+}
+
+// shellQuoteForTest wraps a script for `sh -c`.
+func shellQuoteForTest(script string) string {
+	return "'" + strings.ReplaceAll(script, "'", `'\''`) + "'"
 }
