@@ -207,7 +207,7 @@ else
     die "Could not clone $REPO at $REF"
 fi
 REVISION="$(git -C "$BUILD_DIR" rev-parse --short HEAD)"
-# vMAJOR.MINOR.<commit count>, the one place it's assembled — the same number
+# vYEAR.MONTH.<commit count>, the one place it's assembled — the same number
 # the binary is stamped with below and the PWA build inlines.
 VERSION="$(node "$BUILD_DIR/scripts/version.mjs")"
 PATCH="$(node "$BUILD_DIR/scripts/version.mjs" --patch)"
