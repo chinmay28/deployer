@@ -11,6 +11,7 @@ import HostDetail from './pages/HostDetail'
 import HostFile from './pages/HostFile'
 import HostFiles from './pages/HostFiles'
 import HostForm from './pages/HostForm'
+import HostRemote from './pages/HostRemote'
 import HostService from './pages/HostService'
 import HostServiceNew from './pages/HostServiceNew'
 import HostServices from './pages/HostServices'
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="/hosts/:id/file" element={<HostFile />} />
         <Route path="/hosts/:id/cron" element={<HostCron />} />
         <Route path="/hosts/:id/boot" element={<HostBoot />} />
+        <Route path="/hosts/:id/remote" element={<HostRemote />} />
         <Route path="/hosts/:id/services" element={<HostServices />} />
         <Route path="/hosts/:id/service" element={<HostService />} />
         <Route path="/hosts/:id/service/new" element={<HostServiceNew />} />
