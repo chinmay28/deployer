@@ -39,6 +39,7 @@ export function Meter({
   total,
   value,
   display,
+  tone = 'usage',
 }: {
   /** Usually a word, but a row about one process names it and its pid. */
   label: ReactNode
@@ -46,6 +47,11 @@ export function Meter({
   total?: number
   value?: number
   display: string
+  /** How a full bar reads. A usage bar goes amber and then red as it fills,
+   *  because a full disk is trouble. A progress bar means the opposite — full
+   *  is the thing you were waiting for — so it stays the accent colour all the
+   *  way to the end. */
+  tone?: 'usage' | 'progress'
 }) {
   const pct = value ?? percent(used ?? 0, total ?? 0)
   return (
@@ -54,7 +60,11 @@ export function Meter({
         <span>{label}</span>
         <b>{display}</b>
       </div>
-      <div className={`bar ${severity(pct)}`} role="meter" aria-valuenow={Math.round(pct)}>
+      <div
+        className={`bar ${tone === 'usage' ? severity(pct) : ''}`}
+        role="meter"
+        aria-valuenow={Math.round(pct)}
+      >
         <span style={{ width: `${Math.max(pct, 1.5)}%` }} />
       </div>
     </div>

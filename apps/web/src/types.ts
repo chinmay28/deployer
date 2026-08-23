@@ -432,6 +432,81 @@ export interface RemoteSession {
   url: string
 }
 
+/**
+ * The downloader: deluge running on the host, driven from here.
+ *
+ * One object answers the four questions the screen asks in order — is deluge
+ * installed, has Deployer set it up, is it running, and what is it doing —
+ * because each of them is only worth asking if the one before it was yes.
+ */
+export interface TorrentDaemon {
+  /** The systemd unit, so the daemon is a service like any other. */
+  unit: string
+  /** Whether deluge is on the host at all. It is the one thing on this screen
+   *  Deployer will not install for you. */
+  installed: boolean
+  /** The deluge commands that are missing, which the screen turns into the
+   *  line to run. */
+  missing?: string[]
+  /** deluged's own version. */
+  version?: string
+  /** Whether Deployer has written the daemon onto this host. */
+  configured: boolean
+  /** Whether a torrent could be added right now. */
+  ready: boolean
+  running: boolean
+  /** Whether it comes back after a reboot. Unlike the remote session, it
+   *  does — a download that takes six hours should survive a restart. */
+  enabled: boolean
+  /** systemd's own words, for when "running" is not the whole story. */
+  active?: string
+  sub?: string
+  /** True where the host is running a unit an older Deployer wrote. */
+  stale?: boolean
+  /** The account it runs as, and so the account that owns the files. */
+  user: string
+  /** Where the files land. Before setup it is the folder Deployer would use. */
+  downloads: string
+  /** The disk behind that folder, in bytes. A torrent that fills a Pi's card
+   *  is the ordinary way this goes wrong. */
+  free?: number
+  capacity?: number
+  torrents: Torrent[]
+  /** What deluge said when it could not be asked. A state to report rather
+   *  than an error: everything else on the screen is still true. */
+  trouble?: string
+}
+
+export interface Torrent {
+  /** The info hash deluge knows it by, and what an action names. */
+  id: string
+  /** Until a magnet link's metadata arrives, deluge answers with the hash. */
+  name: string
+  /** Deluge's own word: Downloading, Seeding, Paused, Queued, Checking. */
+  state: string
+  /** 0 to 100. */
+  progress: number
+  /** Bytes: what has arrived, and what the whole thing is. */
+  done: number
+  size: number
+  /** Bytes per second. */
+  down: number
+  up: number
+  /** Seconds left, and deluge's own words for the same thing — "∞" says
+   *  something a zero cannot. */
+  eta?: number
+  etaText?: string
+  ratio?: number
+  /** Where this torrent's own files are going — the folder the downloader had
+   *  when it was added, which is not always the one it has now. */
+  folder?: string
+  /** Connected, and visible: the two numbers deluge prints as "4 (23)". */
+  seeds: number
+  seedsTotal: number
+  peers: number
+  peersTotal: number
+}
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 

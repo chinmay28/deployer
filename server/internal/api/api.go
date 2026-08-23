@@ -94,6 +94,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/hosts/{id}/remote", s.handleRemoteRemove)
 	mux.HandleFunc("POST /api/hosts/{id}/remote/action", s.handleRemoteAction)
 
+	// The downloader is deluge on the host. Adding a torrent is a POST to the
+	// collection because that is what it is — one more torrent — and the daemon
+	// itself is set up and taken away under /setup, so the two cannot be
+	// confused for one another.
+	mux.HandleFunc("GET /api/hosts/{id}/torrents", s.handleTorrents)
+	mux.HandleFunc("POST /api/hosts/{id}/torrents", s.handleTorrentAdd)
+	mux.HandleFunc("POST /api/hosts/{id}/torrents/action", s.handleTorrentAction)
+	mux.HandleFunc("POST /api/hosts/{id}/torrents/setup", s.handleTorrentSetup)
+	mux.HandleFunc("DELETE /api/hosts/{id}/torrents/setup", s.handleTorrentRemove)
+
 	mux.HandleFunc("GET /api/hosts/{id}/files", s.handleListFiles)
 	mux.HandleFunc("DELETE /api/hosts/{id}/files", s.handleRemoveFile)
 	mux.HandleFunc("GET /api/hosts/{id}/files/content", s.handleReadFile)
