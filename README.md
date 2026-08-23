@@ -405,6 +405,14 @@ first runs, so a download needs no dialog: it goes straight to
 `~/Downloads`, which the same screen then lists, newest first, with a way
 through to the file browser.
 
+Updating Deployer does not reach back and rewrite the scripts already on a host
+— a session somebody is using should not change under them — so a host set up by
+an older version keeps running what it was given. That is only right if it is
+said out loud, so Deployer stamps the scripts it writes with a hash of them and
+the screen reports a host running an older set, with the button to write the
+current one. Setting up again keeps the password and the profile; a running
+session keeps the old script until it is stopped and started.
+
 **A session that comes up black — an X screen with a mouse pointer and nothing
 else — is the browser failing to start**, and that has any number of causes with
 only one symptom. So the browser's own output goes to the session's journal

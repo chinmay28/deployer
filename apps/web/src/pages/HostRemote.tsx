@@ -98,6 +98,23 @@ export default function HostRemote() {
       <Loading error={error} offline={offline} hasData={!!session} />
       {failure && <Banner tone="bad">{failure}</Banner>}
 
+      {session?.stale && (
+        <Card>
+          <Banner tone="warn">
+            This host is running a session script an older Deployer wrote. Updating Deployer does
+            not reach back and rewrite it — setting the session up again does.
+          </Banner>
+          <p className="sub" style={{ marginTop: 0 }}>
+            Nothing is lost by it: the password and the browser profile stay, so you stay signed
+            into whatever you were. A session that is running keeps the old script until you stop
+            and start it.
+          </p>
+          <button className="secondary block" onClick={setup} disabled={!!busy}>
+            {busy === 'setup' ? 'Setting up…' : 'Set it up again'}
+          </button>
+        </Card>
+      )}
+
       {!session ? (
         <Card>
           <div className="sub">Asking {host?.name ?? 'the host'} about its browser…</div>

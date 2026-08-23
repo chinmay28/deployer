@@ -2,6 +2,8 @@ package hostops
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -113,6 +115,11 @@ type RemoteSession struct {
 	Password string `json:"password,omitempty"`
 	// Homepage is the page the session opens when it starts.
 	Homepage string `json:"homepage,omitempty"`
+	// Stale reports a session written by an older Deployer. Updating Deployer
+	// does not rewrite what is on the host — setting it up again does — so a
+	// host still running the old scripts says so rather than leaving somebody
+	// to wonder why a fix changed nothing.
+	Stale bool `json:"stale,omitempty"`
 	// User is the account the session runs as — whose home the profile lives
 	// in, and whose Downloads the files land in.
 	User string `json:"user"`
@@ -266,6 +273,7 @@ func parseRemoteStatus(out, user string) *RemoteSession {
 		session.SetupLog = log
 	}
 
+	revision := ""
 	for _, line := range found["config"] {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok {
@@ -280,8 +288,13 @@ func parseRemoteStatus(out, user string) *RemoteSession {
 			if geometryPattern.MatchString(value) {
 				session.Geometry = value
 			}
+		case "REVISION":
+			revision = value
 		}
 	}
+	// A host that has a session at all, running scripts this build did not
+	// write, is a host where setting up again is the whole of the fix.
+	session.Stale = revision != "" && revision != remoteRevision()
 
 	session.Password = first(found["password"])
 	session.Homepage = first(found["homepage"])
@@ -385,6 +398,7 @@ geom=$3
 port=$4
 url=$5
 reset=$6
+rev=$7
 
 if [ "$(id -u 2>/dev/null || echo 1)" != 0 ]; then
   printf 'setting up a remote session needs root\n' >&2
@@ -425,6 +439,7 @@ chmod 750 "$lib/remote-install.sh" || exit 5
   printf 'VNC_PORT=%%s\n' %[6]d
   printf 'DOWNLOADS=%%s\n' "$dl"
   printf 'PROFILE=%%s\n' "$profile"
+  printf 'REVISION=%%s\n' "$rev"
 } > "$etc/config" || exit 6
 printf '%%s\n' "$url" > "$etc/homepage" || exit 6
 
@@ -659,6 +674,33 @@ done &
 wait
 `
 
+// renderRemoteSetup builds the script that writes a session onto a host: the
+// session script and the installer are embedded in it, so this one string is
+// everything Deployer would put there.
+func renderRemoteSetup() string {
+	return fmt.Sprintf(remoteSetupScript,
+		remoteConfDir, remoteLibDir,
+		fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
+		fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
+		remoteDisplay, remoteVNCPort, RemoteUnit)
+}
+
+// remoteRevision names the scripts this build writes, as a hash of them.
+//
+// A host keeps its copy: the session runs the script that was written when it
+// was set up, and updating Deployer does not reach back and rewrite it. That is
+// the right behaviour — a running session should not change under somebody —
+// but silently is the wrong way to do it, because the fix Deployer shipped is
+// then not the code the host is running and nothing on the screen says so.
+//
+// Hashing the scripts rather than keeping a number by hand means the answer is
+// never out of date: change a line of the session script and every host that
+// has the old one says so.
+func remoteRevision() string {
+	sum := sha256.Sum256([]byte(renderRemoteSetup()))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
 // SetupRemote installs and configures a host's remote session. It returns as
 // soon as the install is under way; RemoteStatus is how its progress is read.
 //
@@ -682,14 +724,8 @@ func (s *Service) SetupRemote(ctx context.Context, h *store.Host, opts RemoteSet
 		return nil, invalid("%q is not a user a session can run as", h.Username)
 	}
 
-	script := fmt.Sprintf(remoteSetupScript,
-		remoteConfDir, remoteLibDir,
-		fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
-		fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
-		remoteDisplay, remoteVNCPort, RemoteUnit)
-
-	res, err := s.run(ctx, h, elevate(script,
-		"", h.Username, geometry, strconv.Itoa(port), homepage, boolArg(opts.Reset)), "")
+	res, err := s.run(ctx, h, elevate(renderRemoteSetup(),
+		"", h.Username, geometry, strconv.Itoa(port), homepage, boolArg(opts.Reset), remoteRevision()), "")
 	if err != nil {
 		return nil, err
 	}
