@@ -607,14 +607,24 @@ if [ -z "$browser" ]; then
   else
     printf '== apt installed no browser; fetching Chrome as a package instead\n'
   fi
-  deb=$(mktemp /tmp/deployer-chrome.XXXXXX) || exit 16
+  # A directory rather than mktemp's own name, because apt refuses a package
+  # whose filename does not end in .deb — "Unsupported file ... given on
+  # commandline" — and mktemp has no portable way to put a suffix on one.
+  tmp=$(mktemp -d /tmp/deployer-chrome.XXXXXX) || exit 16
+  deb="$tmp/google-chrome-stable.deb"
   if ! curl -fsSL -o "$deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
-    rm -f "$deb"
+    rm -rf "$tmp"
     printf 'could not download Chrome\n' >&2
     exit 16
   fi
-  apt-get install -y "$deb" || { rm -f "$deb"; exit 17; }
-  rm -f "$deb"
+  # apt installs a local package and its dependencies in one go. Where it will
+  # not, dpkg puts the package in place and apt is asked to finish the job,
+  # which is the older way of doing the same thing.
+  if ! apt-get install -y "$deb"; then
+    dpkg -i "$deb" || true
+    apt-get -f install -y || { rm -rf "$tmp"; exit 17; }
+  fi
+  rm -rf "$tmp"
   pick_browser || { printf 'Chrome installed but will not run\n' >&2; exit 18; }
 fi
 printf '== the session will run %%s\n' "$browser"

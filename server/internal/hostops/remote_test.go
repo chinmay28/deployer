@@ -910,9 +910,11 @@ func TestInstallScriptFetchesAPackageBrowserWhereOnlySnapsExist(t *testing.T) {
 		filepath.Join(bin, "dpkg"):         "#!/bin/sh\necho amd64\n",
 		filepath.Join(bin, "chown"):        "#!/bin/sh\nexit 0\n",
 		filepath.Join(bin, "x11vnc"):       "#!/bin/sh\n[ \"$1\" = -storepasswd ] && printf 'stored\\n' > \"$3\"; exit 0\n",
-		// curl writes the file it was asked for; installing that .deb is what
-		// puts a real browser on the PATH.
-		filepath.Join(bin, "curl"): "#!/bin/sh\n: > \"$3\"\n",
+		// curl writes the file it was asked for, and records the name: apt
+		// refuses a package that is not called .deb, and the name is exactly
+		// what was wrong the first time this ran on a real host.
+		filepath.Join(bin, "curl"): "#!/bin/sh\nprintf '%s\\n' \"$3\" >> " +
+			filepath.Join(bin, "..", "downloaded") + "\n: > \"$3\"\n",
 		filepath.Join(bin, "apt-get"): "#!/bin/sh\ncase \"$*\" in *.deb*|*/tmp/deployer-chrome*) " +
 			"printf '#!/bin/sh\\nexit 0\\n' > " + filepath.Join(bin, "google-chrome") +
 			"; chmod +x " + filepath.Join(bin, "google-chrome") + ";; esac\nexit 0\n",
@@ -934,6 +936,13 @@ func TestInstallScriptFetchesAPackageBrowserWhereOnlySnapsExist(t *testing.T) {
 	}
 	if !strings.Contains(out, "the session will run google-chrome") {
 		t.Errorf("the installer should end naming a browser that is a package:\n%s", out)
+	}
+	// apt will not touch a local package whose name does not end in .deb: it
+	// answers "Unsupported file ... given on commandline" and stops. A
+	// temporary name from mktemp does not, which cost a round trip to find.
+	downloaded := strings.TrimSpace(read(t, filepath.Join(bin, "..", "downloaded")))
+	if !strings.HasSuffix(downloaded, ".deb") {
+		t.Errorf("Chrome was downloaded to %q, which apt will refuse to install", downloaded)
 	}
 	if got := strings.TrimSpace(read(t, filepath.Join(root, remoteConfDir, "setup.state"))); got != "ok" {
 		t.Errorf("state is %q, want ok", got)
