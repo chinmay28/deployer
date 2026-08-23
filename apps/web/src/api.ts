@@ -129,6 +129,16 @@ export const api = {
       method: 'POST',
       ...json({ action, url }),
     }),
+  /** Sends keystrokes into a running session: something to type, a key to
+   *  press, or an address to go to. A phone cannot type into a picture — the
+   *  session is a pixel stream — so what is typed on Deployer's own screen is
+   *  sent there instead, with the phone's keyboard, autocorrect and password
+   *  manager doing the work. Exactly one of the three. */
+  remoteInput: (id: number, input: { type?: string; key?: string; go?: string }) =>
+    request<void>(`/api/hosts/${id}/remote/input`, {
+      method: 'POST',
+      ...json({ type: input.type ?? '', key: input.key ?? '', go: input.go ?? '' }),
+    }),
   /** Takes the session off the host. Purging takes the browser profile with it,
    *  and with it every site it was signed into. The downloads always stay. */
   removeRemote: (id: number, purge = false) =>

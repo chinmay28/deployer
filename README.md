@@ -396,6 +396,27 @@ once rather than every time. It is also why removing the session asks whether to
 take the profile with it: throwing away the logins silently would be the wrong
 kind of quiet. Downloads are never removed either way.
 
+**A session is a picture, and a phone cannot type into one.** Tapping a text box
+in the session moves a pointer over a rectangle of pixels; iOS raises its
+keyboard for text fields it can see, and the only ones it can see are Deployer's.
+So the typing happens on Deployer's screen — a real input, with the phone's own
+keyboard, autocorrect and password manager — and the keystrokes are sent across
+with `xdotool`. **Go to** is the session's address bar driven from this one,
+which is the address bar, the typing and Return in a single tap rather than a
+fiddle over VNC. Beside it are the keys worth a button: Enter, Tab, Backspace,
+Esc, select-all and the arrows. Nothing else, because a keyboard shortcut nobody
+asked for is not something to send blind into a browser holding a bank session.
+(noVNC has a keyboard of its own behind the tab on the left edge of the session,
+and it works; this is the one that does not involve squinting.)
+
+**A session can be phone-shaped.** The **Phone** shape gives it a narrow screen
+*and* asks sites as a phone would, so what comes back is the mobile layout with
+touch-sized buttons — which is what makes a session drivable with a thumb rather
+than merely visible on a phone. Tablet and Desktop are there for the sites whose
+desktop layout is the one that works, and noVNC scales whichever it is down to
+fit. The user agent is only claimed where the screen is narrow enough for it to
+be true.
+
 Two details make it usable from a phone rather than merely possible. The address
 bar is on Deployer's screen, not in the session — typing a URL into a browser
 over VNC on a phone keyboard is the worst part of doing this by hand — so
@@ -719,6 +740,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/remote`            | install or reconfigure it; the packages install detached |
 | `DELETE` | `/api/hosts/{id}/remote`            | remove it, `?purge=true` to delete the browser profile too |
 | `POST`   | `/api/hosts/{id}/remote/action`     | start it (with the page to open) or stop it |
+| `POST`   | `/api/hosts/{id}/remote/input`      | type into the running session, press one of a short list of keys, or go to an address |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
 | `DELETE` | `/api/hosts/{id}/files`             | delete `?path=`, `&recursive=true` for a full directory |
 | `GET`    | `/api/hosts/{id}/files/content`     | read a file, `?path=`                |

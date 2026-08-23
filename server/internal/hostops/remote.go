@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -156,6 +157,12 @@ type RemoteFile struct {
 // among them: without a window manager the browser still runs, its dialogs are
 // just harder to move, and a missing package is no reason to refuse to start.
 var remotePieces = []string{"Xvfb", "x11vnc", "websockify"}
+
+// remoteTypingPieces are what typing from Deployer's own screen needs. They are
+// not among the pieces a session cannot start without: a host missing xdotool
+// has a session that works and one convenience that does not, which is not a
+// reason to refuse to start it.
+var remoteTypingPieces = []string{"xdotool"}
 
 // remoteBrowsers are the browsers a session will use, best first. Chromium is
 // first because it is what a Raspberry Pi already has, and because its download
@@ -576,7 +583,7 @@ printf '== updating the package list\n'
 apt-get update || exit 10
 
 printf '== installing the virtual screen, the VNC server and noVNC\n'
-apt-get install -y xvfb x11vnc novnc websockify curl xdg-utils || exit 11
+apt-get install -y xvfb x11vnc novnc websockify curl xdg-utils xdotool || exit 11
 
 printf '== installing a window manager\n'
 apt-get install -y openbox || printf 'openbox is not available here; dialogs will be unmanaged\n'
@@ -766,6 +773,14 @@ case "$browser" in
       --password-store=basic --disable-features=Translate \
       --disable-gpu --disable-dev-shm-usage \
       --window-position=0,0 --window-size="$w,$h" --start-maximized "$url"
+    # A narrow screen is a phone-shaped session, and half of what makes a site
+    # serve its phone layout is the width — the other half is being asked as a
+    # phone. Sites that decide by user agent rather than by viewport are
+    # exactly the ones worth getting right here: banks, ticketing, anything
+    # with a login. Above that width nothing is claimed that is not true.
+    if [ "$w" -le 600 ]; then
+      set -- --user-agent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36" "$@"
+    fi
     # Chromium refuses to start as root with its sandbox on, and a host whose
     # SSH user is root is a host where the session would otherwise never come
     # up at all. Everywhere else the sandbox stays exactly where it is.
@@ -985,6 +1000,147 @@ func (s *Service) RemoveRemote(ctx context.Context, h *store.Host, purge bool) e
 		return failure(res, "could not remove the remote session from "+h.Name)
 	}
 	return nil
+}
+
+// The session is a picture, which is the whole reason typing into it from a
+// phone is hard: iOS raises its keyboard for a text field it can see, and every
+// text field in the session is a rectangle of pixels. noVNC's own keyboard
+// button works around that with a hidden input, and it is worth knowing about —
+// but Deployer has a text field of its own on the screen already, and sending
+// what somebody typed there is both easier and better: their own keyboard,
+// their own autocorrect, their own password manager.
+//
+// xdotool is what puts it into the session. What is typed reaches it as a
+// quoted argument, never as text a shell parses.
+
+// remoteKeys are the keys worth a button on a phone. Anything else is typing,
+// and a keyboard shortcut nobody asked for is not something to send blind into
+// a browser holding somebody's bank session.
+var remoteKeys = map[string]string{
+	"enter":     "Return",
+	"tab":       "Tab",
+	"escape":    "Escape",
+	"backspace": "BackSpace",
+	"space":     "space",
+	"up":        "Up",
+	"down":      "Down",
+	"selectall": "ctrl+a",
+}
+
+// MaxRemoteTypeBytes bounds one piece of typing. A password, a search, an
+// address — nothing here is an essay.
+const MaxRemoteTypeBytes = 2000
+
+// remoteTypeScript sends keystrokes to the session's screen. It runs as the
+// account the session runs as, which is the one whose browser is listening.
+//
+// Three shapes, because they are what a phone needs: type this, press that,
+// and go to this address — which is the address bar's whole job and is a
+// keystroke, a piece of typing and a Return that nobody should have to send
+// one at a time.
+const remoteTypeScript = `set -u
+dpy=$1
+what=$2
+text=$3
+export DISPLAY=":$dpy"
+command -v xdotool >/dev/null 2>&1 || { printf 'xdotool is not installed on this host\n' >&2; exit 3; }
+[ -e "/tmp/.X11-unix/X$dpy" ] || { printf 'the session is not running\n' >&2; exit 4; }
+
+case "$what" in
+  type)
+    xdotool type --clearmodifiers --delay 12 -- "$text" || exit 5
+    ;;
+  key)
+    xdotool key --clearmodifiers -- "$text" || exit 5
+    ;;
+  go)
+    # ctrl+l is the address bar in every browser this will ever run, and the
+    # three steps are one thing from the phone's side.
+    xdotool key --clearmodifiers -- ctrl+l || exit 5
+    xdotool type --clearmodifiers --delay 12 -- "$text" || exit 5
+    xdotool key --clearmodifiers -- Return || exit 5
+    ;;
+  *)
+    printf 'that is not something to send\n' >&2
+    exit 6
+    ;;
+esac
+printf 'sent\n'
+`
+
+// RemoteInput is one thing to send to a running session: text to type, a key to
+// press, or an address to go to.
+type RemoteInput struct {
+	Type string `json:"type"`
+	Key  string `json:"key"`
+	Go   string `json:"go"`
+}
+
+// SendRemoteInput types into the session, presses a key in it, or sends it to
+// an address. Exactly one of the three, which is what the caller has to choose.
+func (s *Service) SendRemoteInput(ctx context.Context, h *store.Host, in RemoteInput) error {
+	what, text, err := in.resolve()
+	if err != nil {
+		return err
+	}
+	res, err := s.run(ctx, h, asUser(remoteTypeScript, strconv.Itoa(remoteDisplay), what, text), "")
+	if err != nil {
+		return err
+	}
+	switch res.ExitCode {
+	case 0:
+		return nil
+	case 3:
+		return invalid("this host has no xdotool, so Deployer cannot type into the session — set the session up again to install it")
+	case 4:
+		return invalid("the session is not running")
+	}
+	return failure(res, "could not send that to the session on "+h.Name)
+}
+
+// resolve turns the three fields into the one thing being asked for, and
+// refuses anything that is not exactly one of them.
+func (in RemoteInput) resolve() (what, text string, err error) {
+	switch {
+	case in.Type != "" && in.Key == "" && in.Go == "":
+		if len(in.Type) > MaxRemoteTypeBytes {
+			return "", "", invalid("that is more than one field's worth of typing")
+		}
+		// Control characters are keys, not text, and xdotool would take some of
+		// them as instructions of its own.
+		for _, r := range in.Type {
+			if r < 0x20 && r != '\t' {
+				return "", "", invalid("send Enter and Tab as keys rather than as text")
+			}
+		}
+		return "type", in.Type, nil
+	case in.Key != "" && in.Type == "" && in.Go == "":
+		key, ok := remoteKeys[strings.ToLower(strings.TrimSpace(in.Key))]
+		if !ok {
+			return "", "", invalid("%q is not a key Deployer will send", in.Key)
+		}
+		return "key", key, nil
+	case in.Go != "" && in.Type == "" && in.Key == "":
+		page, err := CleanRemoteURL(in.Go)
+		if err != nil {
+			return "", "", err
+		}
+		if page == "" {
+			return "", "", invalid("that does not look like a web address")
+		}
+		return "go", page, nil
+	}
+	return "", "", invalid("send one of: something to type, a key to press, or an address to go to")
+}
+
+// RemoteKeyNames is every key a caller may ask for, for the screen to offer.
+func RemoteKeyNames() []string {
+	names := make([]string, 0, len(remoteKeys))
+	for name := range remoteKeys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // RemoteURL is where the session is reached: noVNC, on the host, told to

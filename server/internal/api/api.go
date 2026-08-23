@@ -78,6 +78,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/remote", s.handleRemoteSetup)
 	mux.HandleFunc("DELETE /api/hosts/{id}/remote", s.handleRemoteRemove)
 	mux.HandleFunc("POST /api/hosts/{id}/remote/action", s.handleRemoteAction)
+	mux.HandleFunc("POST /api/hosts/{id}/remote/input", s.handleRemoteInput)
 
 	mux.HandleFunc("GET /api/hosts/{id}/files", s.handleListFiles)
 	mux.HandleFunc("DELETE /api/hosts/{id}/files", s.handleRemoveFile)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -994,4 +995,149 @@ printf 'broken=%s\n' "$broken_browsers"
 // shellQuoteForTest wraps a script for `sh -c`.
 func shellQuoteForTest(script string) string {
 	return "'" + strings.ReplaceAll(script, "'", `'\''`) + "'"
+}
+
+// Typing into a session is the answer to a session being a picture: a phone
+// raises its keyboard for a text field it can see, and there are none in a
+// pixel stream. What is typed on Deployer's own screen is sent across instead,
+// and what is sent has to arrive as text rather than as anything a shell or
+// xdotool would act on.
+func TestTypeScriptSendsTextKeysAndAddresses(t *testing.T) {
+	root := t.TempDir()
+	sent := filepath.Join(root, "sent")
+	// The session's screen has to look like it is there, since typing into one
+	// that is not is a mistake worth its own answer.
+	socket := "/tmp/.X11-unix/X" + strconv.Itoa(remoteDisplay)
+	if err := os.MkdirAll("/tmp/.X11-unix", 0o1777); err != nil {
+		t.Skipf("no /tmp/.X11-unix to fake an X server in: %v", err)
+	}
+	if _, err := os.Stat(socket); err != nil {
+		f, err := os.Create(socket)
+		if err != nil {
+			t.Skipf("cannot write %s: %v", socket, err)
+		}
+		f.Close()
+		t.Cleanup(func() { os.Remove(socket) })
+	}
+	bin := stubBin(t, map[string]string{
+		"xdotool": `printf '%s\n' "$*" >> ` + sent,
+	})
+
+	type call struct {
+		what, text string
+		want       []string
+	}
+	for _, tc := range []call{
+		{"type", "hunter2 correct horse", []string{"type --clearmodifiers --delay 12 -- hunter2 correct horse"}},
+		{"key", "Return", []string{"key --clearmodifiers -- Return"}},
+		{"go", "https://example.com/login", []string{
+			"key --clearmodifiers -- ctrl+l",
+			"type --clearmodifiers --delay 12 -- https://example.com/login",
+			"key --clearmodifiers -- Return",
+		}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			os.Remove(sent)
+			out, code := runScript(t,
+				asUser(remoteTypeScript, strconv.Itoa(remoteDisplay), tc.what, tc.text), "", bin)
+			if code != 0 {
+				t.Fatalf("%s exited %d: %s", tc.what, code, out)
+			}
+			got := read(t, sent)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("xdotool was asked %q, want it to contain %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// Text that looks like a command is text. This is the same proof the rest of
+// the package rests on, aimed at the one thing here that carries what somebody
+// typed on a phone.
+func TestTypedTextIsNeverACommand(t *testing.T) {
+	root := t.TempDir()
+	sent := filepath.Join(root, "sent")
+	socket := "/tmp/.X11-unix/X" + strconv.Itoa(remoteDisplay)
+	if err := os.MkdirAll("/tmp/.X11-unix", 0o1777); err != nil {
+		t.Skipf("no /tmp/.X11-unix: %v", err)
+	}
+	if _, err := os.Stat(socket); err != nil {
+		f, err := os.Create(socket)
+		if err != nil {
+			t.Skipf("cannot write %s: %v", socket, err)
+		}
+		f.Close()
+		t.Cleanup(func() { os.Remove(socket) })
+	}
+	bin := stubBin(t, map[string]string{
+		// Recording every argument separately is what shows a value arriving as
+		// one word rather than as several.
+		"xdotool": `for a in "$@"; do printf '[%s]\n' "$a"; done >> ` + sent,
+	})
+
+	for _, nasty := range []string{
+		"; rm -rf /",
+		"$(touch pwned)",
+		"`touch pwned`",
+		"--window 1",
+		"a b   c",
+		"quote'single",
+	} {
+		os.Remove(sent)
+		if _, code := runScript(t, asUser(remoteTypeScript, strconv.Itoa(remoteDisplay), "type", nasty), "", bin); code != 0 {
+			t.Fatalf("typing %q exited %d", nasty, code)
+		}
+		if got := read(t, sent); !strings.Contains(got, "["+nasty+"]") {
+			t.Errorf("typing %q reached xdotool as %q, want one argument", nasty, got)
+		}
+		if _, err := os.Stat("pwned"); err == nil {
+			os.Remove("pwned")
+			t.Fatalf("typing %q ran something", nasty)
+		}
+	}
+}
+
+// A session that is not running has nothing to type into, and xdotool that is
+// not installed is a host that needs setting up again. Both are Deployer's
+// answer to give rather than a shell error to pass on.
+func TestTypeScriptSaysWhatIsMissing(t *testing.T) {
+	bin := stubBin(t, map[string]string{"xdotool": `exit 0`})
+	// A display number nothing is listening on.
+	if _, code := runScript(t, asUser(remoteTypeScript, "77", "type", "hello"), "", bin); code != 4 {
+		t.Errorf("typing into a session that is not running exited %d, want 4", code)
+	}
+	empty := t.TempDir()
+	if _, code := runScript(t, asUser(remoteTypeScript, strconv.Itoa(remoteDisplay), "type", "hello"), "", empty); code != 3 {
+		t.Errorf("typing without xdotool exited %d, want 3", code)
+	}
+}
+
+// Exactly one of the three, and each of them checked: a key Deployer will send,
+// an address that is one, and text that is text rather than keystrokes.
+func TestRemoteInputResolve(t *testing.T) {
+	if what, text, err := (RemoteInput{Type: "hello"}).resolve(); err != nil || what != "type" || text != "hello" {
+		t.Errorf("typing came back as %q/%q/%v", what, text, err)
+	}
+	if what, text, err := (RemoteInput{Key: "Enter"}).resolve(); err != nil || what != "key" || text != "Return" {
+		t.Errorf("a key came back as %q/%q/%v", what, text, err)
+	}
+	if what, text, err := (RemoteInput{Go: "https://example.com/"}).resolve(); err != nil || what != "go" || text != "https://example.com/" {
+		t.Errorf("an address came back as %q/%q/%v", what, text, err)
+	}
+	for _, bad := range []RemoteInput{
+		{},
+		{Type: "hello", Key: "enter"},
+		{Key: "ctrl+alt+delete"},
+		{Key: "F1"},
+		{Go: "javascript:alert(1)"},
+		{Go: "example.com"},
+		{Type: "two\nlines"},
+		{Type: strings.Repeat("x", MaxRemoteTypeBytes+1)},
+	} {
+		if _, _, err := bad.resolve(); err == nil {
+			t.Errorf("%+v should have been refused", bad)
+		}
+	}
 }

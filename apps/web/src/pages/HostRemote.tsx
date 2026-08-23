@@ -8,10 +8,19 @@ import { ago, bytes } from '../lib/format'
 import { openApp, reachable } from '../lib/launch'
 import type { RemoteSession } from '../types'
 
-/** The screen sizes worth a tap. The default is desktop-width on purpose: a
- *  narrow screen makes sites serve their phone layout, which is the layout the
- *  phone in your hand already has. noVNC scales whatever it is down to fit. */
-const SIZES = ['1024x768', '1280x800', '1440x900']
+/** The shapes worth a tap, and what each is for.
+ *
+ *  A narrow one is a phone-shaped session: the host's browser asks sites as a
+ *  phone and gets their phone layout back, with the big touch targets that
+ *  implies, which is what makes a session drivable with a thumb. A wide one is
+ *  what to pick when a site's desktop layout is the one that works, and noVNC
+ *  scales it down to whatever the phone actually has. */
+const SIZES = [
+  { geometry: '420x900', label: 'Phone' },
+  { geometry: '1024x768', label: 'Tablet' },
+  { geometry: '1280x800', label: 'Desktop' },
+]
+const SIZE_VALUES = SIZES.map((size) => size.geometry)
 
 /** How often to ask while an install is running. Every other screen here
  *  refreshes when you ask it to, because each answer is an SSH session — but
@@ -47,7 +56,7 @@ export default function HostRemote() {
   } = useLoader(() => api.remote(hostId), [hostId], installing ? INSTALL_POLL_MS : undefined)
 
   const [page, setPage] = useState('')
-  const [size, setSize] = useState(SIZES[1])
+  const [size, setSize] = useState(SIZES[0].geometry)
   const [busy, setBusy] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [removing, setRemoving] = useState(false)
@@ -62,7 +71,7 @@ export default function HostRemote() {
   // visit to a site is the whole of the typing.
   useEffect(() => {
     if (session?.homepage) setPage((current) => current || session.homepage || '')
-    if (session?.geometry) setSize((current) => (SIZES.includes(session.geometry) ? session.geometry : current))
+    if (session?.geometry) setSize((current) => (SIZE_VALUES.includes(session.geometry) ? session.geometry : current))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.homepage, session?.geometry])
 
@@ -148,6 +157,7 @@ export default function HostRemote() {
           {session.ready ? (
             session.running ? (
               <Live
+                hostId={hostId}
                 session={session}
                 url={sessionUrl}
                 busy={busy}
@@ -189,20 +199,10 @@ export default function HostRemote() {
               <SectionTitle>Settings</SectionTitle>
               <Card>
                 <Field
-                  label="Screen size"
-                  help="The size the sites see. noVNC scales it to your phone."
+                  label="Shape"
+                  help="Phone asks sites as a phone and gets their phone layout, with touch-sized buttons."
                 >
-                  <div className="chips">
-                    {SIZES.map((option) => (
-                      <button
-                        key={option}
-                        className={`chip ${option === size ? 'on' : ''}`}
-                        onClick={() => setSize(option)}
-                      >
-                        {option}
-                      </button>
-                    ))}
-                  </div>
+                  <SizeChips size={size} onSize={setSize} />
                 </Field>
                 <p className="sub" style={{ marginTop: 0 }}>
                   Writing the session again is also how a host takes a newer Deployer's script. It
@@ -330,18 +330,11 @@ function Absent({
         </Banner>
       )}
 
-      <Field label="Screen size" help="The size the sites see. noVNC scales it to your phone.">
-        <div className="chips">
-          {SIZES.map((option) => (
-            <button
-              key={option}
-              className={`chip ${option === size ? 'on' : ''}`}
-              onClick={() => onSize(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
+      <Field
+        label="Shape"
+        help="Phone asks sites as a phone and gets their phone layout, with touch-sized buttons."
+      >
+        <SizeChips size={size} onSize={onSize} />
       </Field>
 
       <SiteField page={page} onPage={onPage} />
@@ -447,11 +440,13 @@ function Idle({
 
 /** Running: the way in, the password, and the way out. */
 function Live({
+  hostId,
   session,
   url,
   busy,
   onStop,
 }: {
+  hostId: number
   session: RemoteSession
   url: string | null
   busy: string | null
@@ -482,12 +477,16 @@ function Live({
           </Banner>
         )}
         <p className="sub" style={{ marginBottom: 0 }}>
-          It opens outside Deployer, in your phone's browser. Turn the phone sideways: a desktop
-          screen on a portrait phone is mostly scrolling. Downloads need no dialog — they go
+          It opens outside Deployer, in your phone's browser. Downloads need no dialog — they go
           straight to {session.downloads ?? 'the host'}. A screen that is black with only a mouse
           pointer is the browser failing to start, and the journal below says why.
+          {!isPhoneShaped(session.geometry) &&
+            ' This session is a desktop-shaped one, so turn the phone sideways — or set it up as a' +
+              ' Phone below, where sites serve the layout your thumb was made for.'}
         </p>
       </Card>
+
+      <Keyboard hostId={hostId} session={session} />
 
       {session.password && (
         <Card>
@@ -510,6 +509,144 @@ function Live({
         </button>
       </Card>
     </>
+  )
+}
+
+/**
+ * The address bar and the keyboard, on the phone's side of the glass.
+ *
+ * A session is a picture. Tapping a text field in it moves a pointer over a
+ * rectangle of pixels, and iOS has no reason to raise a keyboard for that — it
+ * raises one for text fields it can see, and the only ones it can see are on
+ * this screen. So the typing happens here, in a real input, with the phone's own
+ * keyboard and autocorrect and password manager, and the keystrokes are sent
+ * across.
+ *
+ * Going to an address is the same trick in three steps — the address bar, the
+ * typing, and Return — which is one tap from here and a fiddle over VNC.
+ */
+function Keyboard({ hostId, session }: { hostId: number; session: RemoteSession }) {
+  const [address, setAddress] = useState(session.homepage ?? '')
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+
+  const send = async (label: string, input: { type?: string; key?: string; go?: string }) => {
+    setBusy(label)
+    setFailure(null)
+    try {
+      await api.remoteInput(hostId, input)
+      if (input.type) setText('')
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <SectionTitle>Type from here</SectionTitle>
+      <Card>
+        {failure && <Banner tone="bad">{failure}</Banner>}
+
+        <Field label="Go to" help="The session's address bar, driven from this one.">
+          <input
+            type="url"
+            inputMode="url"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="https://example.com/login"
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+        <button
+          className="secondary block"
+          onClick={() => send('go', { go: address })}
+          disabled={!!busy || address.trim() === ''}
+        >
+          {busy === 'go' ? 'Going…' : 'Go'}
+        </button>
+
+        <Field
+          label="Keyboard"
+          help="Tap where it should go in the session first — a search box, a password field — then send it."
+        >
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Anything to type"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        </Field>
+        <div className="actions" style={{ marginTop: 10 }}>
+          <button
+            className="secondary"
+            onClick={() => send('type', { type: text })}
+            disabled={!!busy || text === ''}
+          >
+            {busy === 'type' ? 'Sending…' : 'Send'}
+          </button>
+          <button
+            className="secondary"
+            onClick={() => send('enter', { key: 'enter' })}
+            disabled={!!busy}
+          >
+            Enter
+          </button>
+        </div>
+        <div className="chips" style={{ marginTop: 10 }}>
+          {[
+            { key: 'tab', label: 'Tab' },
+            { key: 'backspace', label: 'Backspace' },
+            { key: 'escape', label: 'Esc' },
+            { key: 'selectall', label: 'Select all' },
+            { key: 'up', label: '↑' },
+            { key: 'down', label: '↓' },
+          ].map((k) => (
+            <button key={k.key} className="chip" onClick={() => send(k.key, { key: k.key })} disabled={!!busy}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="sub" style={{ marginBottom: 0 }}>
+          The session itself is a picture, so tapping a text box in it will not bring your keyboard
+          up. noVNC has one of its own behind the tab on the left edge of the session, and this is
+          the other way — your keyboard, your password manager, no squinting.
+        </p>
+      </Card>
+    </>
+  )
+}
+
+/** A narrow session is a phone-shaped one: sites are asked as a phone and lay
+ *  themselves out for a thumb. It is the same rule the host's browser uses. */
+function isPhoneShaped(geometry: string): boolean {
+  const width = Number(geometry.split('x')[0])
+  return Number.isFinite(width) && width > 0 && width <= 600
+}
+
+/** The shapes a session can take, as chips. */
+function SizeChips({ size, onSize }: { size: string; onSize: (size: string) => void }) {
+  return (
+    <div className="chips">
+      {SIZES.map((option) => (
+        <button
+          key={option.geometry}
+          className={`chip ${option.geometry === size ? 'on' : ''}`}
+          onClick={() => onSize(option.geometry)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
   )
 }
 

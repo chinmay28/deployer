@@ -123,6 +123,38 @@ func (s *Server) handleRemoteAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, remoteView{session, hostops.RemoteURL(h.Address, session)})
 }
 
+// handleRemoteInput sends keystrokes into a running session: something to type,
+// a key to press, or an address to go to.
+//
+// It exists because a phone cannot type into a picture. The session is a pixel
+// stream, so a browser's address bar in it is a rectangle rather than a text
+// field, and iOS raises its keyboard for text fields it can see. Deployer has
+// one of those on the screen already — so what somebody types there is sent to
+// the session, with their own keyboard, their own autocorrect and their own
+// password manager doing the work.
+func (s *Server) handleRemoteInput(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "type into remote session")
+		return
+	}
+	var in hostops.RemoteInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := opContext(r)
+	defer cancel()
+
+	if err := s.Ops.SendRemoteInput(ctx, h, in); err != nil {
+		s.writeOpError(w, err, "type into remote session")
+		return
+	}
+	// What was typed is not logged. It is as likely to be a password as not.
+	s.Log.Debug("api: sent input to a remote session", "host", h.Name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleRemoteRemove takes the session off the host. `?purge=true` takes the
 // browser profile with it, and with the profile every site it was signed into —
 // which is why it is asked for rather than assumed.

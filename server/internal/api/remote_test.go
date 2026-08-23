@@ -57,3 +57,32 @@ func TestRemoteSessionRequestsNeedAHost(t *testing.T) {
 		}
 	}
 }
+
+// Typing reaches a browser somebody is signed into, so what will be sent is
+// checked here rather than on the host: one thing at a time, a key from the
+// short list Deployer will press, and an address that is one.
+func TestRemoteInputIsValidatedBeforeConnecting(t *testing.T) {
+	_, h := testServer(t, "")
+	id := newHost(t, h)
+
+	for _, tc := range []struct{ name, body string }{
+		{"nothing at all", `{"type":"","key":"","go":""}`},
+		{"two things at once", `{"type":"hello","key":"enter","go":""}`},
+		{"a key nobody asked for", `{"type":"","key":"ctrl+alt+delete","go":""}`},
+		{"a function key", `{"type":"","key":"F1","go":""}`},
+		{"an address that is a script", `{"type":"","key":"","go":"javascript:alert(1)"}`},
+		{"an address that is not one", `{"type":"","key":"","go":"example.com"}`},
+		{"keystrokes sent as text", `{"type":"line\nbreak","key":"","go":""}`},
+		{"an unknown field", `{"type":"hello","key":"","go":"","delay":5}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := do(t, h, "POST", fmt.Sprintf("/api/hosts/%d/remote/input", id), tc.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", w.Code, w.Body)
+			}
+			if decode[apiError](t, w).Error == "" {
+				t.Error("a 400 should say what was wrong with the request")
+			}
+		})
+	}
+}
