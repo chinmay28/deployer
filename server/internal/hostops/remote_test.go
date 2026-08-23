@@ -679,6 +679,10 @@ func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := stubBin(t, map[string]string{
+		// Not root: root already runs the browser without a sandbox, so there
+		// would be nothing for the fallback below to give up. These tests run
+		// as whoever runs them, and that is often root.
+		"id":         `[ "$1" = -u ] && { echo 1000; exit 0; }; echo pi`,
 		"Xvfb":       `sleep 30`,
 		"x11vnc":     `sleep 30`,
 		"websockify": `sleep 30`,
@@ -692,7 +696,7 @@ func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	// It runs until it is stopped, the way systemd runs it, so the test stops it.
-	run := exec.Command("timeout", "6", "sh", script, "1280x800", display, "5999", "6080",
+	run := exec.Command("timeout", "9", "sh", script, "1280x800", display, "5999", "6080",
 		conf, filepath.Join(root, "profile"), filepath.Join(root, "Downloads"))
 	run.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
 	out, _ := run.CombinedOutput()
@@ -710,6 +714,21 @@ func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
 	// leaves a binary on the PATH that cannot run.
 	if !strings.Contains(log, "chromium is "+filepath.Join(bin, "chromium")) {
 		t.Errorf("the session should name the browser it resolved:\n%s", log)
+	}
+
+	// A host that will not give the browser a sandbox gets a session without one
+	// rather than no session at all — after the failure, never in anticipation
+	// of it, and never quietly.
+	if !strings.Contains(log, "will not give chromium a sandbox") {
+		t.Errorf("a browser that keeps dying should be retried without its sandbox:\n%s", log)
+	}
+	if got := strings.TrimSpace(read(t, filepath.Join(conf, "degraded"))); got != "no-sandbox" {
+		t.Errorf("the fallback left %q behind, want it marked so the screen can say so", got)
+	}
+	// Once, not on every failure: the second attempt is what turns it off, and
+	// the ones after that are already without it.
+	if n := strings.Count(log, "retrying without one"); n != 1 {
+		t.Errorf("the sandbox was given up %d times, want once", n)
 	}
 
 	// The lock a crashed browser leaves behind is cleared on the way in;
@@ -761,5 +780,16 @@ func TestRevisionFollowsTheScripts(t *testing.T) {
 	}
 	if !strings.Contains(renderRemoteSetup(), "--disable-dev-shm-usage") {
 		t.Error("the rendered setup should carry the session script it writes")
+	}
+}
+
+// A browser running without its sandbox is something the screen has to say, not
+// something buried in a journal. The host marks it; this is the reading of it.
+func TestStatusReportsABrowserWithoutItsSandbox(t *testing.T) {
+	if session := parseRemoteStatus("@@state\nok\n@@degraded\nno-sandbox\n", "pi"); !session.NoSandbox {
+		t.Error("a session that gave up its sandbox should say so")
+	}
+	if session := parseRemoteStatus("@@state\nok\n@@degraded\n", "pi"); session.NoSandbox {
+		t.Error("an ordinary session should not claim to be degraded")
 	}
 }

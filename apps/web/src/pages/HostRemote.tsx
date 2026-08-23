@@ -115,6 +115,14 @@ export default function HostRemote() {
         </Card>
       )}
 
+      {session?.noSandbox && (
+        <Banner tone="warn">
+          The browser here runs without its sandbox: this host's kernel would not give it one, and
+          the alternative was a session that never started. That is a weaker browser than the one on
+          your phone — worth a thought before you sign into something with it.
+        </Banner>
+      )}
+
       {!session ? (
         <Card>
           <div className="sub">Asking {host?.name ?? 'the host'} about its browser…</div>

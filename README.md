@@ -405,6 +405,17 @@ first runs, so a download needs no dialog: it goes straight to
 `~/Downloads`, which the same screen then lists, newest first, with a way
 through to the file browser.
 
+**A host that will not give the browser a sandbox gets a session without one
+rather than no session at all.** Chromium refuses to start where the kernel
+denies it a sandbox, which on a VPS is ordinary — unprivileged user namespaces
+turned off, or a setuid helper the kernel will not honour — and the choice is
+then between a browser with a weaker defence against the pages it visits and a
+session nobody can use. A session nobody can use protects nobody, so it falls
+back: once, after the second failure rather than in anticipation of one, saying
+so in the journal and leaving a mark that puts a warning on the screen. Signing
+into a bank on a browser without its sandbox is a decision, and decisions
+belong to the person making them, in writing.
+
 Updating Deployer does not reach back and rewrite the scripts already on a host
 — a session somebody is using should not change under them — so a host set up by
 an older version keeps running what it was given. That is only right if it is

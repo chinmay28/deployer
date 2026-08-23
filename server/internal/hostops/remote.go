@@ -115,6 +115,10 @@ type RemoteSession struct {
 	Password string `json:"password,omitempty"`
 	// Homepage is the page the session opens when it starts.
 	Homepage string `json:"homepage,omitempty"`
+	// NoSandbox reports a browser running here without its own sandbox, because
+	// this host would not give it one. It is a weaker browser than the one on
+	// the phone, and whoever signs into something with it should be told.
+	NoSandbox bool `json:"noSandbox,omitempty"`
 	// Stale reports a session written by an older Deployer. Updating Deployer
 	// does not rewrite what is on the host — setting it up again does — so a
 	// host still running the old scripts says so rather than leaving somebody
@@ -185,6 +189,9 @@ cat "$etc/password" 2>/dev/null
 
 printf '@@homepage\n'
 cat "$etc/homepage" 2>/dev/null
+
+printf '@@degraded\n'
+cat "$etc/degraded" 2>/dev/null
 
 printf '@@have\n'
 for b in %s; do
@@ -298,6 +305,7 @@ func parseRemoteStatus(out, user string) *RemoteSession {
 
 	session.Password = first(found["password"])
 	session.Homepage = first(found["homepage"])
+	session.NoSandbox = first(found["degraded"]) == "no-sandbox"
 
 	have := map[string]bool{}
 	for _, line := range found["have"] {
@@ -611,12 +619,21 @@ done
 # resolved path is what says so.
 printf 'deployer-remote: %%s is %%s, on %%s at %%sx%%s\n' \
   "$browser" "$(command -v "$browser")" "$DISPLAY" "$w" "$h"
+# Asking it its version is the cheapest way to find out whether it can run at
+# all: a browser that is really a wrapper around a snap that is not there fails
+# this the same way it fails everything else, and says so in one line.
+printf 'deployer-remote: %%s\n' "$("$browser" --version 2>&1 | head -1)"
 
 # Chromium leaves these behind when it dies, and every launch after that refuses
 # with "the profile appears to be in use" — which, on a screen with nothing else
 # on it, looks exactly like a browser that never started at all. Only one
 # session runs at a time, so a lock found here is always a stale one.
 rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie" 2>/dev/null || true
+
+# Whether the browser still has its sandbox. Firefox is left out of the fallback
+# below entirely: its own sandbox is not a command-line matter.
+sandboxed=1
+rm -f "$conf/degraded" 2>/dev/null || true
 
 case "$browser" in
   firefox*)
@@ -637,6 +654,7 @@ case "$browser" in
     # up at all. Everywhere else the sandbox stays exactly where it is.
     if [ "$(id -u 2>/dev/null || echo 1000)" = 0 ]; then
       set -- --no-sandbox "$@"
+      sandboxed=0
     fi
     ;;
 esac
@@ -661,7 +679,23 @@ while :; do
     fails=$((fails + 1))
     printf 'deployer-remote: %%s exited after %%ss (%%s in a row) — its own output is above\n' \
       "$browser" "$((ended - started))" "$fails"
-    if [ "$fails" -ge 3 ]; then
+
+    # Chromium will not start on a host whose kernel refuses it a sandbox, which
+    # on a VPS is ordinary — unprivileged user namespaces turned off, or a
+    # setuid helper the kernel will not honour. The choice then is a session
+    # that never works or a browser with a weaker defence against the pages it
+    # visits, and a session nobody can use protects nobody. So it falls back,
+    # once, after the failure rather than in anticipation of it — and leaves a
+    # mark, because a browser running without its sandbox is something the
+    # person signing into their bank on it is owed in writing.
+    if [ "$fails" -eq 2 ] && [ "$sandboxed" = 1 ]; then
+      sandboxed=0
+      set -- --no-sandbox "$@"
+      printf 'deployer-remote: this host will not give %%s a sandbox — retrying without one\n' "$browser"
+      printf 'no-sandbox\n' > "$conf/degraded" 2>/dev/null || true
+    fi
+
+    if [ "$fails" -ge 4 ]; then
       printf 'deployer-remote: giving it room — retrying every 20s\n'
       sleep 20
     fi

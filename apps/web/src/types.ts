@@ -409,6 +409,10 @@ export interface RemoteSession {
   password?: string
   /** The page the session opens with. */
   homepage?: string
+  /** True where the browser here runs without its own sandbox, because this
+   *  host would not give it one. A weaker browser than the phone's, and worth
+   *  saying so on the screen rather than only in the journal. */
+  noSandbox?: boolean
   /** True where the host is running scripts an older Deployer wrote. Updating
    *  Deployer does not rewrite what is on a host — setting up again does. */
   stale?: boolean
