@@ -16,6 +16,7 @@ import (
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
+	"github.com/chinmay28/deployer/server/internal/shell"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
@@ -42,6 +43,7 @@ func testServer(t *testing.T, pin string) (*Server, http.Handler) {
 		Runner: deploy.NewRunner(db, svc, health, log),
 		Health: health,
 		Ops:    hostops.NewService(svc),
+		Shells: shell.NewManager(svc, log),
 		Log:    log,
 		Auth:   NewPinAuth(pin),
 	}

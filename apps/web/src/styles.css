@@ -1280,3 +1280,184 @@ button.block {
   background: var(--border);
   margin: 12px -14px;
 }
+
+/* --- Terminal ---------------------------------------------------------- */
+
+/* A terminal wants the whole phone. The tab bar is navigation for a screen you
+   are reading; this one is a screen you are typing at, and every row it takes
+   is a row of output. Going back is the header's job while it is open. */
+body.terminal-open .tabbar {
+  display: none;
+}
+
+/* Fixed to the viewport rather than laid out in the page: the soft keyboard
+   changes what "the viewport" means, and the terminal component keeps this in
+   step with the visual one so the prompt stays above the keyboard instead of
+   behind it. */
+.term-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.term-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(env(safe-area-inset-top) + 6px) 10px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.term-bar .back {
+  min-width: 36px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.term-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.term-title b {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-title span {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.term-end {
+  flex: none;
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 14px;
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* The terminal itself, and the only part of the column allowed to take what is
+   left. min-height: 0 because a flex child otherwise refuses to be shorter
+   than its content, and xterm's content is however tall the scrollback is. */
+.term-stage {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.term-stage .xterm {
+  height: 100%;
+}
+
+/* Reconnecting is the normal state of a phone, not a failure, so it is a line
+   at the bottom of the screen rather than anything that moves the terminal. */
+.term-state {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  text-align: center;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.term-state.connecting {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.term-state.ended {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* The keys a phone keyboard does not have, directly above the one it does. */
+.term-keys {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 6px calc(env(safe-area-inset-bottom) + 5px);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.term-row {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  /* A row of keys that scrolls should not also bounce the terminal above it. */
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.term-row::-webkit-scrollbar {
+  display: none;
+}
+
+.term-key {
+  flex: 1 0 auto;
+  min-width: 38px;
+  min-height: 36px;
+  padding: 0 8px;
+  font: 500 14px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  /* The keys are for typing, not for reading: a long press should not offer to
+     select "Esc". */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.term-key:active {
+  background: var(--press-tint);
+}
+
+/* An armed modifier stays lit until the key it applies to is pressed, because
+   there is no holding a key down on a touchscreen. */
+.term-key.held {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* A row of links inside a card, each its own tap target. */
+.link-row {
+  display: block;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.link-row:last-of-type {
+  border-bottom: none;
+}
+
+/* How wide the terminal came out, between the two size buttons — the number
+   they exist to change. */
+.term-cols {
+  flex: none;
+  align-self: center;
+  min-width: 34px;
+  font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-dim);
+  text-align: center;
+}

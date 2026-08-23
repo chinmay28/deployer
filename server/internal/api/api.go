@@ -12,6 +12,7 @@ import (
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
+	"github.com/chinmay28/deployer/server/internal/shell"
 	"github.com/chinmay28/deployer/server/internal/store"
 )
 
@@ -29,7 +30,10 @@ type Server struct {
 	Health *deploy.Checker
 	// Ops runs administrative work on a host: files, crontabs, restarts.
 	Ops *hostops.Service
-	Log *slog.Logger
+	// Shells holds the login shells open on hosts. They outlive the requests
+	// that made them, which is why they live on the server and not in a handler.
+	Shells *shell.Manager
+	Log    *slog.Logger
 	// Self identifies the machine Deployer runs on; nil disables self-update.
 	Self SelfManager
 	// Version is the build this binary was made from.
@@ -73,6 +77,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/hosts/{id}/services/logs", s.handleServiceLogs)
 	mux.HandleFunc("POST /api/hosts/{id}/services/action", s.handleServiceAction)
 	mux.HandleFunc("POST /api/hosts/{id}/services/reload", s.handleReloadServices)
+
+	// A shell is opened and listed under its host; watching, typing at and
+	// closing one is addressed by the session's own id, because the session is
+	// the thing that persists and the screen may be a different phone.
+	mux.HandleFunc("GET /api/hosts/{id}/shell", s.handleListShells)
+	mux.HandleFunc("POST /api/hosts/{id}/shell", s.handleOpenShell)
+	mux.HandleFunc("GET /api/shell/{sid}", s.handleGetShell)
+	mux.HandleFunc("DELETE /api/shell/{sid}", s.handleCloseShell)
+	mux.HandleFunc("GET /api/shell/{sid}/stream", s.handleShellStream)
+	mux.HandleFunc("POST /api/shell/{sid}/input", s.handleShellInput)
+	mux.HandleFunc("POST /api/shell/{sid}/resize", s.handleShellResize)
 
 	mux.HandleFunc("GET /api/hosts/{id}/remote", s.handleRemoteSession)
 	mux.HandleFunc("POST /api/hosts/{id}/remote", s.handleRemoteSetup)

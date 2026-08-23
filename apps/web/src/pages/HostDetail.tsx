@@ -334,6 +334,21 @@ export default function HostDetail() {
               <span className="chevron">›</span>
             </div>
           </Link>
+          {/* Under Files and Services because it is the answer when neither of
+              them is: the general way in, for the thing nobody built a screen
+              for. It is last of the three on purpose — a tap that edits a
+              config is better than a shell that could have. */}
+          <Link className="card" to={`/hosts/${hostId}/shell`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Terminal</div>
+                <div className="sub">
+                  A login shell as {host.username}, with the keys a phone keyboard is missing
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
           {/* Between the file browser and the crontab because it is the third
               answer to "I need to do something on that machine": some things
               can only be done by a person in front of a browser, and the file

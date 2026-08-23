@@ -464,6 +464,61 @@ on your LAN, and what it buys is not typing them on a phone every time. The VNC
 server itself only ever listens on the host's loopback interface — the one door
 in is the noVNC port, which is `6080` unless you change it.
 
+**Terminal** is a login shell on the host, with a pty behind it — the same
+thing `ssh you@host` gives you, so `htop` draws, `vim` works, tab completion
+completes and colours are colours. There is still no agent: it is one SSH
+session with a terminal requested on it.
+
+**The shell belongs to Deployer, not to the screen looking at it**, and
+everything else about this follows from that. A phone drops its connection
+constantly — the screen locks, another app comes to the front, wifi hands over
+to cellular — and a terminal that lived in the page would lose the directory it
+was in, the command half typed, and whatever was running, every single time. So
+the shell is held open on Deployer's side and everything it prints is kept.
+Going back is not closing: it stays open, the host list is still one tap away,
+and coming back rejoins the same shell with its scrollback. Two phones can watch
+one shell, and each says how many are. It closes itself after fifteen minutes
+with nobody watching, or when you tell it to, or when you type `exit`.
+
+That is also why the screen and the keyboard travel differently. Output arrives
+as server-sent events, which Deployer can be asked to resume from a byte offset,
+so a phone that was away for ten minutes reconnects and gets exactly what it
+missed — and is told, in the terminal, when it was away long enough that
+something scrolled past unrecoverably, because a terminal that jumps silently is
+a terminal lying about what ran. Keystrokes go the other way as ordinary POSTs,
+which need no connection to have stayed up at all. Both directions are base64:
+a pty deals in bytes, half a character can legitimately end a chunk, and Ctrl-C
+is one byte rather than a word.
+
+**The keys a phone keyboard does not have are along the bottom** — `Esc`, `Tab`,
+`^C`, the four arrows, and `Ctrl`, with a second row of the punctuation a shell
+is made of and a phone buries two layers down. `Ctrl` is sticky rather than a
+chord, because there is no holding a key down on a touchscreen: tap it, then tap
+the letter. The bar refuses focus rather than taking it, which is the whole
+trick — a key that focused itself would dismiss the keyboard, and a Tab key that
+closes the keyboard is worse than no Tab key.
+
+**How many columns fit is the other half of the problem**, so the text size is a
+control rather than a setting, with the column count between the two buttons.
+A phone held upright is about 55 columns at a comfortable size and about 70 at a
+small one; turned sideways it is 150, which is more than most output assumes.
+Deployer follows all of it: the terminal is sized to the *visual* viewport
+rather than the window — so the soft keyboard covers the bottom of the screen
+instead of covering the prompt — and the host is told the new window each time,
+which is what makes a full-screen program redraw into the space you can actually
+see. `tput cols` and Deployer agree, always.
+
+**A shell runs as the user Deployer signs in as, and does not become root.**
+That is the opposite of the rule everywhere else on this screen, and the
+exception is deliberate: a file browser that could not open `/etc` would be
+hiding the reality, but a prompt that says one thing and runs as another is how
+a machine gets broken by somebody who was being careful. `sudo` is right there,
+and typing it is a decision.
+
+A shell is the general answer and usually not the quickest one, so it is the
+last of the three ways in rather than the first: a config is fewer taps in
+**Files**, and restarting something is one tap in **Services**.
+
 **Scheduled jobs** edits the crontab, the whole file at once, the way
 `crontab -e` does — for the user Deployer signs in as, and for root. Cron is
 what validates it: a crontab it refuses to parse is not installed, the old one
@@ -578,6 +633,13 @@ it accordingly:
   every host**, as root, and restart the machines. That follows from the key Deployer already
   holds rather than adding to it, but it does put a root shell's reach behind a
   web page — which is the whole argument for the PIN and for the LAN.
+- The **Terminal is a shell**, and it is a shell for anyone who reaches the UI.
+  It is the plainest statement of the point above rather than a new one: the key
+  could always have opened one. It runs as the SSH user rather than as root, and
+  a shell's handle is an unguessable id that is useless without a session — but
+  neither of those is a defence worth leaning on, and the PIN and the LAN are.
+  A shell left open holds an SSH connection until it is closed or is left alone
+  for fifteen minutes.
 - It runs **unauthenticated by default**. Set a PIN with `-pin` /
   `DEPLOYER_PIN` if anything less trusted can reach it.
 - The **database contains the SSH private key**. The installer keeps it at mode
@@ -715,6 +777,13 @@ Quoting is tested the same way — every path a person could type is handed to
 | `GET`    | `/api/hosts/{id}/services/logs`     | its journal, `?name=&lines=` (20–2000) |
 | `POST`   | `/api/hosts/{id}/services/action`   | start, stop, restart, reload, enable or disable |
 | `POST`   | `/api/hosts/{id}/services/reload`   | `daemon-reload` after a unit file changes |
+| `GET`    | `/api/hosts/{id}/shell`             | the login shells open on this host   |
+| `POST`   | `/api/hosts/{id}/shell`             | open one, `{"cols","rows"}`; the size is clamped, never refused |
+| `GET`    | `/api/shell/{sid}`                  | one shell: its size, its byte offset, whether it is still running |
+| `DELETE` | `/api/shell/{sid}`                  | end it                               |
+| `GET`    | `/api/shell/{sid}/stream`           | the screen as server-sent events, `?from=` a byte offset to resume |
+| `POST`   | `/api/shell/{sid}/input`            | keystrokes, base64 — a shell's most important keys are not text |
+| `POST`   | `/api/shell/{sid}/resize`           | tell the pty its window changed      |
 | `GET`    | `/api/hosts/{id}/remote`            | the host's browser session: what is installed, how far a setup got, whether it is running, and what has been downloaded |
 | `POST`   | `/api/hosts/{id}/remote`            | install or reconfigure it; the packages install detached |
 | `DELETE` | `/api/hosts/{id}/remote`            | remove it, `?purge=true` to delete the browser profile too |
@@ -757,6 +826,7 @@ server/
   internal/hostops/  managing a host: files, services, crontab, power state,
                      the remote browser session, and guessing why it last
                      restarted
+  internal/shell/    login shells held open between visits, and their scrollback
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate
