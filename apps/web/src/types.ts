@@ -509,6 +509,28 @@ export interface Installation {
   url?: string
 }
 
+/** A login shell open on a host. It belongs to Deployer rather than to the
+ *  screen looking at it, so the same shell survives the phone locking, and two
+ *  screens can be looking at one. */
+export interface ShellSession {
+  id: string
+  hostId: number
+  /** Who the shell runs as: the SSH user, never root by way of sudo. */
+  user: string
+  cols: number
+  rows: number
+  startedAt: string
+  /** How many bytes the shell has produced. A screen that is reconnecting asks
+   *  the stream to start where it stopped rather than from the beginning. */
+  offset: number
+  running: boolean
+  /** How it ended, in words. Empty while it is running. */
+  exit: string
+  /** How many screens are attached — how you find out a second phone is
+   *  looking at the same shell. */
+  watchers: number
+}
+
 export interface Overview {
   hosts: Host[]
   installations: Installation[]

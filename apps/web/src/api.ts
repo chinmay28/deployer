@@ -21,6 +21,7 @@ import type {
   ServiceList,
   ServiceLog,
   ServiceUnit,
+  ShellSession,
   SSHKeyInfo,
 } from './types'
 
@@ -133,6 +134,25 @@ export const api = {
    *  and with it every site it was signed into. The downloads always stay. */
   removeRemote: (id: number, purge = false) =>
     request<void>(`/api/hosts/${id}/remote${purge ? '?purge=true' : ''}`, { method: 'DELETE' }),
+
+  /** The shells already open on a host, oldest first. A screen arriving on the
+   *  terminal offers to rejoin one rather than opening another, which is what
+   *  makes coming back to a half-typed command the normal case. */
+  shells: (id: number) => request<ShellSession[]>(`/api/hosts/${id}/shell`),
+  /** Opens a login shell. The size is what the screen measured; the server
+   *  clamps it, so a bad measurement is a small terminal and not an error. */
+  openShell: (id: number, cols: number, rows: number) =>
+    request<ShellSession>(`/api/hosts/${id}/shell`, { method: 'POST', ...json({ cols, rows }) }),
+  shell: (sid: string) => request<ShellSession>(`/api/shell/${sid}`),
+  /** Keystrokes, base64. A terminal's most important keys are not text: Ctrl-C
+   *  is one byte, an arrow key is three, and neither survives being a string. */
+  shellInput: (sid: string, data: string) =>
+    request<void>(`/api/shell/${sid}/input`, { method: 'POST', ...json({ data }) }),
+  shellResize: (sid: string, cols: number, rows: number) =>
+    request<ShellSession>(`/api/shell/${sid}/resize`, { method: 'POST', ...json({ cols, rows }) }),
+  /** Ends the shell. Leaving the screen does not: that is the point of it
+   *  living on the server. */
+  closeShell: (sid: string) => request<void>(`/api/shell/${sid}`, { method: 'DELETE' }),
 
   /** An empty user means the account Deployer signs in as. */
   crontab: (id: number, user = '') =>

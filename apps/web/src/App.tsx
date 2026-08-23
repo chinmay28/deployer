@@ -15,6 +15,7 @@ import HostRemote from './pages/HostRemote'
 import HostService from './pages/HostService'
 import HostServiceNew from './pages/HostServiceNew'
 import HostServices from './pages/HostServices'
+import HostShell from './pages/HostShell'
 import Hosts from './pages/Hosts'
 import NotFound from './pages/NotFound'
 import Overview from './pages/Overview'
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/hosts/:id/services" element={<HostServices />} />
         <Route path="/hosts/:id/service" element={<HostService />} />
         <Route path="/hosts/:id/service/new" element={<HostServiceNew />} />
+        <Route path="/hosts/:id/shell" element={<HostShell />} />
         <Route path="/apps" element={<Apps />} />
         <Route path="/apps/new" element={<AppForm />} />
         <Route path="/apps/:id" element={<AppDetail />} />

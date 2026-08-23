@@ -20,6 +20,7 @@ import (
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
 	"github.com/chinmay28/deployer/server/internal/selfhost"
+	"github.com/chinmay28/deployer/server/internal/shell"
 	"github.com/chinmay28/deployer/server/internal/sshx"
 	"github.com/chinmay28/deployer/server/internal/store"
 	"github.com/chinmay28/deployer/server/internal/version"
@@ -88,6 +89,11 @@ func run() error {
 		log.Warn("marked deployments as interrupted after restart", "count", n)
 	}
 
+	// Shells are held open between visits, so they outlive the requests that
+	// made them and are reaped on their own clock.
+	shells := shell.NewManager(hostSvc, log)
+	go shells.Run(ctx)
+
 	health := deploy.NewChecker(db, hostSvc, log)
 	go health.Run(ctx)
 	runner := deploy.NewRunner(db, hostSvc, health, log)
@@ -99,7 +105,8 @@ func run() error {
 
 	apiSrv := &api.Server{
 		DB: db, Hosts: hostSvc, Poller: poller,
-		Runner: runner, Health: health, Ops: hostops.NewService(hostSvc), Log: log, Auth: auth,
+		Runner: runner, Health: health, Ops: hostops.NewService(hostSvc), Shells: shells,
+		Log: log, Auth: auth,
 		Self: self, Version: appVersion(), SelfRef: *ref,
 	}
 

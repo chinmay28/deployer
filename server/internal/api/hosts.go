@@ -137,8 +137,12 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// SQLite reuses row ids, so what is held in memory about this host goes
-	// with it rather than waiting to be inherited by the next one.
+	// with it rather than waiting to be inherited by the next one. A shell is
+	// a live SSH connection as well as a memory: forgetting the host without
+	// ending it would leave a terminal typing at a machine Deployer no longer
+	// admits to knowing.
 	s.Hosts.Forget(id)
+	s.Shells.CloseHost(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
