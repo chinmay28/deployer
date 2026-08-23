@@ -409,6 +409,9 @@ export interface RemoteSession {
   password?: string
   /** The page the session opens with. */
   homepage?: string
+  /** True where the host is running scripts an older Deployer wrote. Updating
+   *  Deployer does not rewrite what is on a host — setting up again does. */
+  stale?: boolean
   /** The account it runs as — whose Downloads a file lands in. */
   user: string
   downloads?: string

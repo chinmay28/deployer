@@ -46,12 +46,7 @@ func rootStubs(extra map[string]string) map[string]string {
 }
 
 func setupScriptFor(root, user, geometry, port, page, reset string) string {
-	script := fmt.Sprintf(remoteSetupScript,
-		remoteConfDir, remoteLibDir,
-		fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
-		fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
-		remoteDisplay, remoteVNCPort, RemoteUnit)
-	return asUser(script, root, user, geometry, port, page, reset)
+	return asUser(renderRemoteSetup(), root, user, geometry, port, page, reset, remoteRevision())
 }
 
 // waitForFile reads a file a backgrounded command is expected to write. Setup
@@ -84,8 +79,7 @@ func TestGeneratedScriptsParse(t *testing.T) {
 	scripts := map[string]string{
 		"session": fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " ")),
 		"install": fmt.Sprintf(remoteInstallScript, remoteConfDir, strings.Join(remoteBrowsers, " ")),
-		"setup": fmt.Sprintf(remoteSetupScript, remoteConfDir, remoteLibDir,
-			"# session", "# install", remoteDisplay, remoteVNCPort, RemoteUnit),
+		"setup":   renderRemoteSetup(),
 		"status": fmt.Sprintf(remoteStatusScript, MaxRemoteLogBytes,
 			strings.Join(remoteBrowsersAndPieces(), " "), RemoteUnit),
 		"start":  fmt.Sprintf(remoteStartScript, remoteConfDir, RemoteUnit),
@@ -731,5 +725,41 @@ func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
 	}
 	if !strings.Contains(string(prefs), filepath.Join(root, "Downloads")) {
 		t.Errorf("downloads are not pointed at the host's own directory: %s", prefs)
+	}
+}
+
+// Updating Deployer does not reach back and rewrite the scripts already on a
+// host — a running session should not change under somebody — so a host still
+// running the old ones has to say so. Otherwise a fix that shipped is not the
+// code the host is running, and nothing on the screen admits it.
+func TestStatusReportsASessionWrittenByAnOlderDeployer(t *testing.T) {
+	current := "PORT=6080\nGEOMETRY=1280x800\nREVISION=" + remoteRevision() + "\n"
+	older := "PORT=6080\nGEOMETRY=1280x800\nREVISION=0000deadbeef\n"
+
+	if session := parseRemoteStatus("@@state\nok\n@@config\n"+current, "pi"); session.Stale {
+		t.Error("a session written by this build is not stale")
+	}
+	if session := parseRemoteStatus("@@state\nok\n@@config\n"+older, "pi"); !session.Stale {
+		t.Error("a session written by an older build should say so")
+	}
+	// A host with nothing set up has nothing to be stale, and saying it does
+	// would put an update prompt in front of somebody who has never run this.
+	if session := parseRemoteStatus("@@state\nabsent\n", "pi"); session.Stale {
+		t.Error("a host with no session at all is not stale")
+	}
+}
+
+// The revision has to follow the scripts by itself: one kept by hand is one
+// that is eventually wrong, which is the failure it exists to prevent.
+func TestRevisionFollowsTheScripts(t *testing.T) {
+	before := remoteRevision()
+	if len(before) != 12 {
+		t.Errorf("revision is %q, want something short enough for a config line", before)
+	}
+	if again := remoteRevision(); again != before {
+		t.Errorf("the same build gave two revisions: %q then %q", before, again)
+	}
+	if !strings.Contains(renderRemoteSetup(), "--disable-dev-shm-usage") {
+		t.Error("the rendered setup should carry the session script it writes")
 	}
 }
