@@ -22,6 +22,11 @@ import type { Torrent, TorrentDaemon } from '../types'
  *  on plenty of machines somebody has already made it. */
 const INSTALL = 'sudo apt install -y deluged deluge-console'
 
+/** The largest file worth carrying to a host, matching what the server will
+ *  accept. A torrent file is a list of hashes: a few kilobytes is ordinary and
+ *  a megabyte is a very large one. */
+const MAX_TORRENT_BYTES = 4 * 1024 * 1024
+
 /** How often to ask while something is moving. Every other host screen answers
  *  when you ask it to, because each answer is an SSH session — but a progress
  *  bar that only moved when you tapped it would not be a progress bar. It stops
@@ -391,14 +396,33 @@ function AddTorrent({
   }
 
   const addFile = async (file: File) => {
-    try {
-      onAdd({ file: await encode(file), name: file.name })
-    } catch {
-      onFail(`${file.name} could not be read.`)
-    }
     // A picker that still holds last time's file will not fire for the same one
     // again, and picking the same torrent twice is a reasonable thing to do.
-    if (picker.current) picker.current.value = ''
+    const done = () => {
+      if (picker.current) picker.current.value = ''
+    }
+    // Nothing that size is a torrent file, and a phone should not spend a
+    // minute uploading a video to be told so by the host.
+    if (file.size > MAX_TORRENT_BYTES) {
+      onFail(`${file.name} is too large to be a .torrent file.`)
+      done()
+      return
+    }
+    let picked: { text: string; base64: string }
+    try {
+      picked = await readFile(file)
+    } catch {
+      onFail(`${file.name} could not be read.`)
+      done()
+      return
+    }
+    if (!looksLikeATorrent(picked.text)) {
+      onFail(`${file.name} is not a .torrent file.`)
+      done()
+      return
+    }
+    onAdd({ file: picked.base64, name: file.name })
+    done()
   }
 
   return (
@@ -427,10 +451,15 @@ function AddTorrent({
           Pick a file
         </button>
       </div>
+      {/* No accept list on purpose. It is the obvious thing to write and it
+          makes the picker useless: iOS Files and Android's picker both filter
+          by the type the system knows a file as, ".torrent" maps to nothing
+          either of them has heard of, and the result is a picker where every
+          file is greyed out and the one you want cannot be chosen. So anything
+          can be picked, and what it is is decided by reading it. */}
       <input
         ref={picker}
         type="file"
-        accept=".torrent,application/x-bittorrent"
         hidden
         onChange={(e) => {
           const file = e.target.files?.[0]
@@ -645,18 +674,33 @@ function tone(state: string): 'good' | 'warn' | 'bad' | 'neutral' | 'accent' {
 }
 
 /**
- * A picked file, as base64 for the JSON body.
+ * A picked file, read once: its bytes as a string for the check above, and the
+ * base64 that goes in the request body.
  *
- * It is done a chunk at a time because String.fromCharCode is given the bytes
- * as arguments, and a megabyte of them in one call is how a browser is made to
- * throw "too many arguments" on a file that is otherwise perfectly ordinary.
+ * The encoding is done a chunk at a time because String.fromCharCode is given
+ * the bytes as arguments, and a megabyte of them in one call is how a browser
+ * is made to throw "too many arguments" on a file that is otherwise perfectly
+ * ordinary.
  */
-async function encode(file: File): Promise<string> {
+async function readFile(file: File): Promise<{ text: string; base64: string }> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const chunk = 8192
   let binary = ''
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
   }
-  return btoa(binary)
+  return { text: binary, base64: btoa(binary) }
+}
+
+/**
+ * The same rule the server applies: a torrent file is a bencoded dictionary
+ * with an info dictionary inside it.
+ *
+ * Asking here as well is not distrust of the server — it still refuses
+ * everything this does. It is that the picker now offers every file on the
+ * phone, so picking the wrong one is easy, and being told which file it was
+ * beats a round trip to the host to be told the same thing about none.
+ */
+function looksLikeATorrent(text: string): boolean {
+  return text.startsWith('d') && text.includes('4:info')
 }
