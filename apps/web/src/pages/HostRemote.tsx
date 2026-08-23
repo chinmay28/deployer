@@ -80,7 +80,20 @@ export default function HostRemote() {
   }
 
   const setup = () => act('setup', () => api.setupRemote(hostId, { geometry: size, homepage: page }))
-  const start = () => act('start', () => api.remoteAction(hostId, 'start', page))
+  const start = () =>
+    act('start', async () => {
+      // Nothing is running at this moment, so this is the safe point to bring
+      // the host's copy of the scripts up to date. A session that keeps running
+      // last month's script is how a fix somebody installed changes nothing.
+      if (session?.stale) {
+        await api.setupRemote(hostId, {
+          geometry: session.geometry,
+          port: session.port,
+          homepage: page,
+        })
+      }
+      await api.remoteAction(hostId, 'start', page)
+    })
   const stop = () => act('stop', () => api.remoteAction(hostId, 'stop'))
   const remove = (purge: boolean) =>
     act('remove', async () => {
@@ -173,6 +186,34 @@ export default function HostRemote() {
 
           {(session.ready || session.setup === 'failed') && (
             <>
+              <SectionTitle>Settings</SectionTitle>
+              <Card>
+                <Field
+                  label="Screen size"
+                  help="The size the sites see. noVNC scales it to your phone."
+                >
+                  <div className="chips">
+                    {SIZES.map((option) => (
+                      <button
+                        key={option}
+                        className={`chip ${option === size ? 'on' : ''}`}
+                        onClick={() => setSize(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                <p className="sub" style={{ marginTop: 0 }}>
+                  Writing the session again is also how a host takes a newer Deployer's script. It
+                  keeps the password and the browser profile, so nothing signs out; a running
+                  session picks the change up when it is stopped and started.
+                </p>
+                <button className="secondary block" onClick={setup} disabled={!!busy}>
+                  {busy === 'setup' ? 'Setting up…' : 'Set it up again'}
+                </button>
+              </Card>
+
               <SectionTitle>The session</SectionTitle>
               <Card>
                 <Detail label="Runs as" value={session.user} />
@@ -376,7 +417,13 @@ function Idle({
       </p>
       <SiteField page={page} onPage={onPage} />
       <button className="primary block" onClick={onStart} disabled={!!busy}>
-        {busy === 'start' ? 'Starting…' : 'Start the session'}
+        {busy === 'start'
+          ? session.stale
+            ? 'Updating and starting…'
+            : 'Starting…'
+          : session.stale
+            ? 'Update and start the session'
+            : 'Start the session'}
       </button>
     </Card>
   )
