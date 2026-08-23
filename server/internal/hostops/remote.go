@@ -589,17 +589,33 @@ browser=""
 for b in %s; do
   if command -v "$b" >/dev/null 2>&1; then browser="$b"; break; fi
 done
-[ -n "$browser" ] || exit 3
+[ -n "$browser" ] || { printf 'deployer-remote: no browser installed\n'; exit 3; }
+
+# Which browser, and what it really is. A distribution that ships its browser as
+# a snap wrapper leaves a binary that is on the PATH and cannot run, and the
+# resolved path is what says so.
+printf 'deployer-remote: %%s is %%s, on %%s at %%sx%%s\n' \
+  "$browser" "$(command -v "$browser")" "$DISPLAY" "$w" "$h"
+
+# Chromium leaves these behind when it dies, and every launch after that refuses
+# with "the profile appears to be in use" — which, on a screen with nothing else
+# on it, looks exactly like a browser that never started at all. Only one
+# session runs at a time, so a lock found here is always a stale one.
+rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie" 2>/dev/null || true
 
 case "$browser" in
   firefox*)
     set -- --profile "$profile" --width "$w" --height "$h" --new-window "$url"
     ;;
   *)
-    # --password-store=basic matters on a machine with no desktop session:
-    # without it Chromium waits for a keyring that is never going to answer.
+    # Three flags that are not about preference. --password-store=basic: without
+    # it Chromium waits on a keyring no headless host will ever answer.
+    # --disable-gpu: there is no GPU behind a virtual screen. And
+    # --disable-dev-shm-usage: a VM with a small /dev/shm makes Chromium die
+    # somewhere between starting and drawing, which reads as a black screen.
     set -- --user-data-dir="$profile" --no-first-run --no-default-browser-check \
       --password-store=basic --disable-features=Translate \
+      --disable-gpu --disable-dev-shm-usage \
       --window-position=0,0 --window-size="$w,$h" --start-maximized "$url"
     # Chromium refuses to start as root with its sandbox on, and a host whose
     # SSH user is root is a host where the session would otherwise never come
@@ -613,8 +629,30 @@ esac
 # A browser closed by a stray tap should not end the session — the screen, the
 # VNC server and the gateway are all still there, and starting it again is
 # cheaper than starting the session again.
+#
+# Its output goes to the journal rather than to /dev/null. A browser that will
+# not start says why on stderr, and throwing that away leaves a black screen as
+# the only symptom of every possible cause — which is no symptom at all. The
+# Services screen is where those lines are read.
+fails=0
 while :; do
-  "$browser" "$@" >/dev/null 2>&1
+  started=$(date +%%s 2>/dev/null || echo 0)
+  "$browser" "$@"
+  ended=$(date +%%s 2>/dev/null || echo 0)
+  # A browser that ran for a while was closed by whoever was using it. One that
+  # died in seconds is failing, and saying so in words beats leaving somebody to
+  # infer it from a screen that stays empty.
+  if [ "$((ended - started))" -lt 5 ]; then
+    fails=$((fails + 1))
+    printf 'deployer-remote: %%s exited after %%ss (%%s in a row) — its own output is above\n' \
+      "$browser" "$((ended - started))" "$fails"
+    if [ "$fails" -ge 3 ]; then
+      printf 'deployer-remote: giving it room — retrying every 20s\n'
+      sleep 20
+    fi
+  else
+    fails=0
+  fi
   sleep 2
 done &
 
