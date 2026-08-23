@@ -1,24 +1,35 @@
 // Package version carries Deployer's version number.
 //
-// The scheme is vMAJOR.MINOR.PATCH where the patch number is the repository's
-// commit count — every commit is a patch release, so `v1.0.42` is the 42nd
-// commit on the 1.0 line. Major and minor are declared here in source and
-// bumped by hand; the patch number can only come from git, which a compiled
-// binary has no access to, so it is stamped at link time instead:
+// The scheme is calendar-based: vYEAR.MONTH.PATCH, where the patch number is
+// the repository's commit count — every commit is a patch release, so
+// `v2026.8.42` is the 42nd commit on the 2026.8 line. The month is written as
+// a plain number, not zero-padded: that keeps the string valid semver, which
+// forbids a leading zero, and nothing here orders versions by sorting text.
+//
+// Year and Month are declared here in source and bumped by hand when a release
+// line opens — deliberately not read from the build clock, which would move the
+// version without a commit and make a rebuild of an old tree disagree with what
+// it originally shipped. The patch number can only come from git, which a
+// compiled binary has no access to, so it is stamped at link time instead:
 //
 //	go build -ldflags "-X github.com/chinmay28/deployer/server/internal/version.Patch=$(git rev-list --count HEAD)"
 //
 // `make build` does this for you via scripts/version.mjs, which is also where
-// the PWA's build reads Major/Minor from — keep the two constants below in a
+// the PWA's build reads Year/Month from — keep the two constants below in a
 // form that file's regex can still find.
 package version
 
 import "strconv"
 
-// Major and minor version. Bump these by hand.
+// Year and Month of the release line, bumped by hand. Month is a calendar
+// month, 1–12.
+//
+// There is no semantic major/minor: the leading numbers say *when* a release
+// line opened, not what it promises about compatibility. What breaks on an
+// upgrade is called out in the changelog, which is the thing to read.
 const (
-	Major = 1
-	Minor = 0
+	Year  = 2026
+	Month = 8
 )
 
 // Patch is the repository's commit count, stamped at link time (see the
@@ -35,5 +46,5 @@ func Stamped() bool { return Patch != "0" }
 // releases. This is the one rendering: it's what /api/health reports, what
 // /api/self hands Settings, and what the PWA shows under its name.
 func String() string {
-	return "v" + strconv.Itoa(Major) + "." + strconv.Itoa(Minor) + "." + Patch
+	return "v" + strconv.Itoa(Year) + "." + strconv.Itoa(Month) + "." + Patch
 }

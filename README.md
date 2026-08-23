@@ -750,10 +750,16 @@ make version        # print the version this tree would build as
 
 ### Versioning
 
-The version is `vMAJOR.MINOR.PATCH`, where the patch number is the repository's
-commit count — every commit is a patch release, so `v1.0.42` is the 42nd commit
-on the 1.0 line. Major and minor are constants in
-`server/internal/version/version.go`, bumped by hand.
+The version is `vYEAR.MONTH.PATCH` — a calendar version, where the patch number
+is the repository's commit count, so `v2026.8.42` is the 42nd commit on the
+2026.8 line. There is no semantic major/minor: the leading numbers say *when* a
+release line opened, not what it promises about compatibility.
+
+`Year` and `Month` are constants in `server/internal/version/version.go`, bumped
+by hand when a line opens — deliberately not read from the build clock, so
+rebuilding an old tree still reports what it originally shipped. The month is
+not zero-padded (`v2026.8.42`, not `v2026.08.42`), because semver forbids a
+leading zero and every version has to stay something a semver parser accepts.
 
 The patch number only exists at build time, so `scripts/version.mjs` works it
 out once and both halves of the build take it from there: the linker stamps it
@@ -912,7 +918,7 @@ server/
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate
-  internal/version/  the version number, and where MAJOR.MINOR is declared
+  internal/version/  the version number, and where YEAR.MONTH is declared
   internal/web/      serves the embedded PWA
 apps/web/            the PWA: React, Vite, no UI framework
 scripts/             the installer, its test harness, and version.mjs

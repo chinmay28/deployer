@@ -161,7 +161,7 @@ func portOf(addr string) string {
 	return port
 }
 
-// appVersion reports the build this binary came from: vMAJOR.MINOR.PATCH, where
+// appVersion reports the build this binary came from: vYEAR.MONTH.PATCH, where
 // the patch number is the repository's commit count that `make build` and the
 // installer stamp in (see internal/version).
 //
