@@ -405,6 +405,19 @@ first runs, so a download needs no dialog: it goes straight to
 `~/Downloads`, which the same screen then lists, newest first, with a way
 through to the file browser.
 
+**A browser that is really a snap is not a browser this can use.** Ubuntu ships
+both chromium and firefox that way, and `apt install chromium` there quietly
+installs the snap — which fails on the spot in a session like this, printing
+nothing: snap confinement walls the browser out of the hidden profile directory
+in the home it is otherwise allowed into, and a system service has no user
+runtime directory for snapd to work in. So a browser whose path resolves into
+`/snap` is skipped rather than run, on a host with nothing else the setup fetches
+Chrome as an ordinary package (which adds Google's repository itself, so it keeps
+updating like everything else), and the screen names the snap rather than
+reporting a browser that looks installed and cannot start. On an architecture
+with no package build of a browser, setup says that instead of installing
+something that will not run.
+
 **A host that will not give the browser a sandbox gets a session without one
 rather than no session at all.** Chromium refuses to start where the kernel
 denies it a sandbox, which on a VPS is ordinary — unprivileged user namespaces

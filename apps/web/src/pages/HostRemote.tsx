@@ -307,6 +307,13 @@ function Absent({
           minutes and a few hundred megabytes, mostly the browser.
         </p>
       )}
+      {session.snapBrowser && (
+        <p className="sub">
+          The {session.snapBrowser} here is a snap, which cannot run in a session like this — it is
+          walled out of the browser profile, and a service has no runtime directory for snapd to
+          work in. Setting up fetches a browser that is an ordinary package instead.
+        </p>
+      )}
       {!sudo && (
         <Banner tone="warn">
           {session.user} needs passwordless sudo here first — apt and a unit file both want root.
