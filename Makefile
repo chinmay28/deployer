@@ -11,7 +11,7 @@ VERSION_PKG := github.com/chinmay28/deployer/server/internal/version
 PATCH := $(shell node scripts/version.mjs --patch 2>/dev/null)
 LDFLAGS := -s -w $(if $(PATCH),-X $(VERSION_PKG).Patch=$(PATCH))
 
-.PHONY: build server web test test-installer test-provision vet run clean version
+.PHONY: build server web test test-installer test-provision test-torrent vet run clean version
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
@@ -48,6 +48,11 @@ test-installer:
 ## throwaway user and writes /etc/sudoers.d/deployer, then removes both)
 test-provision:
 	cd server && DEPLOYER_E2E=1 $(GO) test ./internal/hosts/ -run ProvisionEndToEnd -v
+
+## test-torrent: drive a real deluge (needs deluged and deluge-console; starts a
+## daemon on 58946 that talks to the network for as long as the test runs)
+test-torrent:
+	cd server && DEPLOYER_DELUGE=1 $(GO) test ./internal/hostops/ -run RealDeluge -v
 
 vet:
 	cd server && $(GO) vet ./...

@@ -464,6 +464,52 @@ on your LAN, and what it buys is not typing them on a phone every time. The VNC
 server itself only ever listens on the host's loopback interface — the one door
 in is the noVNC port, which is `6080` unless you change it.
 
+**Torrents** hands a torrent to the host and lets it do the downloading. Paste a
+magnet link, or pick a `.torrent` file on the phone, and the files land on the
+host's own disk. That is the whole point of it: a torrent opened on a phone
+downloads over the phone's connection, onto the phone's storage, and then has to
+be moved to the machine that was always supposed to have it. The phone is the
+remote control; the host has the disk, the wired connection and the uptime.
+
+**Deluge is the host's to install, and Deployer says so rather than installing
+it.** Everything else on this screen is a package Deployer will fetch for you;
+this one is not, and deliberately. A BitTorrent client is a decision about what a
+machine does on a network, and on plenty of machines somebody has already made
+it — a seedbox with its own daemon, a distribution that packages it differently,
+a host where it has no business being at all. So a host without it gets the line
+to run, copyable, and nothing else until it has been run: `sudo apt install -y
+deluged deluge-console`.
+
+**The daemon Deployer sets up is Deployer's own.** Its state lives in
+`/var/lib/deployer-torrent`, it runs as the SSH user, and it answers on port
+58946 rather than deluge's own 58846 — so a `deluged` the host already runs
+carries on untouched, with its own torrents and its own client attached, instead
+of one of the two losing a race to bind a port. There is still no agent: adding
+a torrent is `deluge-console` over one SSH session, the same way everything else
+here works. deluged authenticates its clients out of an auth file, and the
+password in it is generated on the host and read there by the scripts that need
+it — never stored by Deployer, never in an API response, never on a screen.
+
+**It comes back after a reboot**, which is the opposite of the remote browser
+session's rule and for the opposite reason. A browser holding your logins should
+run for the two minutes you are using it; a download that takes six hours should
+survive the machine restarting in the middle of it. So this unit has an
+`[Install]` section and is enabled, and deluge picks each torrent up from its own
+state. Adding a torrent to a stopped daemon starts it rather than refusing —
+somebody who has just handed Deployer a torrent has said what they want clearly
+enough.
+
+The rest of the screen is a bar per torrent with its speed, its swarm and what is
+left, pause and resume, and the disk behind the download folder — a torrent
+filling a Pi's card is the ordinary way this goes wrong, and the figure belongs
+on the screen before the download rather than after it. It is an ordinary
+service, so its journal is on the **Services** screen with everything else.
+
+Removing a torrent asks whether the part already downloaded goes with it, because
+that is the one thing here that cannot be undone. Removing the downloader never
+touches the files at all: the service and deluge's state go, deluge stays
+installed, and everything already downloaded stays exactly where it is.
+
 **Terminal** is a login shell on the host, with a pty behind it — the same
 thing `ssh you@host` gives you, so `htop` draws, `vim` works, tab completion
 completes and colours are colours. There is still no agent: it is one SSH
@@ -652,6 +698,11 @@ it accordingly:
   reach its noVNC port and read its password — which this UI shows — is signed
   in to whatever you were. It is off by default, cannot be enabled to start at
   boot, and is worth stopping when you are done rather than leaving up.
+- A **torrent downloader is a machine downloading whatever it is told to**, from
+  strangers, as the SSH user, into a folder of your choosing. deluged listens on
+  loopback only and Deployer never turns that off, but anyone who can reach the
+  UI can put anything on that disk and fill it. It is not set up until you set it
+  up, and removing it takes the daemon and its state away again.
 - The systemd unit runs as a dedicated non-root user with `NoNewPrivileges`,
   `ProtectSystem=strict`, an empty capability set and a system-call filter.
 - Rotating the key in Settings invalidates every host until you install the new
@@ -665,6 +716,7 @@ make run            # build and start on :8899
 make test           # Go tests, including SSH integration tests where sshd exists
 make test-installer # install, upgrade, rollback and uninstall, in a sandbox
 make test-provision # set a host up over SSH for real (root; changes the machine)
+make test-torrent   # drive a real deluge: add, pause and remove a torrent
 
 cd apps/web && npm run dev   # Vite dev server, proxying /api to :8899
 
@@ -788,6 +840,11 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/remote`            | install or reconfigure it; the packages install detached |
 | `DELETE` | `/api/hosts/{id}/remote`            | remove it, `?purge=true` to delete the browser profile too |
 | `POST`   | `/api/hosts/{id}/remote/action`     | start it (with the page to open) or stop it |
+| `GET`    | `/api/hosts/{id}/torrents`          | the downloader: whether deluge is installed, what is set up, and what it is downloading |
+| `POST`   | `/api/hosts/{id}/torrents`          | add one: a magnet link, the address of a `.torrent`, or the file itself, base64 |
+| `POST`   | `/api/hosts/{id}/torrents/action`   | start or stop the daemon; pause, resume or remove a torrent (`"data":true` deletes what it downloaded) |
+| `POST`   | `/api/hosts/{id}/torrents/setup`    | write the daemon onto the host, or change where it downloads |
+| `DELETE` | `/api/hosts/{id}/torrents/setup`    | take it off; deluge and the downloaded files stay |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
 | `DELETE` | `/api/hosts/{id}/files`             | delete `?path=`, `&recursive=true` for a full directory |
 | `GET`    | `/api/hosts/{id}/files/content`     | read a file, `?path=`                |
@@ -824,8 +881,8 @@ server/
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
   internal/hostops/  managing a host: files, services, crontab, power state,
-                     the remote browser session, and guessing why it last
-                     restarted
+                     the remote browser session, the torrent downloader, and
+                     guessing why it last restarted
   internal/shell/    login shells held open between visits, and their scrollback
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks

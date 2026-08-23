@@ -366,6 +366,22 @@ export default function HostDetail() {
               <span className="chevron">›</span>
             </div>
           </Link>
+          {/* After the remote session, because it is the same errand ending
+              in the same place: a file that belongs on the host rather than on
+              the phone. A browser is for the ones behind a login; this is for
+              the ones behind a magnet link, which a phone would otherwise
+              download twice. */}
+          <Link className="card" to={`/hosts/${hostId}/torrents`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Torrents</div>
+                <div className="sub">
+                  Hand {host.name} a torrent and let it do the downloading
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
           <Link className="card" to={`/hosts/${hostId}/cron`}>
             <div className="row between">
               <div className="grow">

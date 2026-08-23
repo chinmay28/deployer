@@ -23,6 +23,7 @@ import type {
   ServiceUnit,
   ShellSession,
   SSHKeyInfo,
+  TorrentDaemon,
 } from './types'
 
 /** ApiError carries the server's message so the UI can show it verbatim. */
@@ -134,6 +135,39 @@ export const api = {
    *  and with it every site it was signed into. The downloads always stay. */
   removeRemote: (id: number, purge = false) =>
     request<void>(`/api/hosts/${id}/remote${purge ? '?purge=true' : ''}`, { method: 'DELETE' }),
+
+  /** The downloader on a host: whether deluge is installed, what Deployer has
+   *  set up, whether the daemon is running, and what it is downloading. It is
+   *  a read, so a screen watching a progress bar is free to ask on a timer. */
+  torrents: (id: number) => request<TorrentDaemon>(`/api/hosts/${id}/torrents`),
+  /** Starts one torrent downloading: a magnet link, the address of a .torrent
+   *  file for the host to fetch itself, or the file's own bytes when one was
+   *  picked on the phone. A stopped daemon is started rather than refused. */
+  addTorrent: (
+    id: number,
+    input: { source?: string; file?: string; name?: string; path?: string },
+  ) => request<TorrentDaemon>(`/api/hosts/${id}/torrents`, { method: 'POST', ...json(input) }),
+  /** Runs the daemon, or acts on one torrent. Removing takes the files with it
+   *  only when asked — that is the one thing here that cannot be undone. */
+  torrentAction: (
+    id: number,
+    action: 'start' | 'stop' | 'pause' | 'resume' | 'remove',
+    torrentId = '',
+    data = false,
+  ) =>
+    request<TorrentDaemon>(`/api/hosts/${id}/torrents/action`, {
+      method: 'POST',
+      ...json({ action, id: torrentId, data }),
+    }),
+  /** Writes the daemon onto the host, or rewrites the one already there.
+   *  Idempotent: the password and everything already downloading stay, so
+   *  changing the folder does not restart a download. */
+  setupTorrents: (id: number, input: { downloads?: string; reset?: boolean } = {}) =>
+    request<TorrentDaemon>(`/api/hosts/${id}/torrents/setup`, { method: 'POST', ...json(input) }),
+  /** Takes the daemon and deluge's state off the host. Deluge stays installed,
+   *  and every file already downloaded stays where it is. */
+  removeTorrents: (id: number) =>
+    request<void>(`/api/hosts/${id}/torrents/setup`, { method: 'DELETE' }),
 
   /** The shells already open on a host, oldest first. A screen arriving on the
    *  terminal offers to rejoin one rather than opening another, which is what
