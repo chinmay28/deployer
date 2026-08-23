@@ -88,7 +88,7 @@ export function LaunchButton({
 
 /** An arrow leaving its frame: the app opens away from Deployer, in the
  *  browser, rather than in the screen the button is on. */
-function LaunchIcon() {
+export function LaunchIcon() {
   return (
     <svg
       className="launch-icon"

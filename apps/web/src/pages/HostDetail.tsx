@@ -334,6 +334,23 @@ export default function HostDetail() {
               <span className="chevron">›</span>
             </div>
           </Link>
+          {/* Between the file browser and the crontab because it is the third
+              answer to "I need to do something on that machine": some things
+              can only be done by a person in front of a browser, and the file
+              they end up with belongs on the host rather than on the phone. */}
+          <Link className="card" to={`/hosts/${hostId}/remote`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Remote session</div>
+                <div className="sub">
+                  A browser on this host, driven from here — sign in, download, and the file is on
+                  {' '}
+                  {host.name}
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
           <Link className="card" to={`/hosts/${hostId}/cron`}>
             <div className="row between">
               <div className="grow">

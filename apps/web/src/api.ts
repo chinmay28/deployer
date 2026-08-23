@@ -13,6 +13,7 @@ import type {
   MetricSummary,
   Overview,
   ProvisionResult,
+  RemoteSession,
   Sample,
   SelfInfo,
   ServiceAction,
@@ -109,6 +110,29 @@ export const api = {
    *  no record of it" into an answer next time. Idempotent. */
   keepJournal: (id: number) =>
     request<JournalStorage>(`/api/hosts/${id}/boot/journal`, { method: 'POST' }),
+
+  /** The browser running on the host: what is installed, how far a setup got,
+   *  whether it is up, and what has been downloaded. Nothing here writes, so
+   *  the screen watching an install is free to ask again on a timer. */
+  remote: (id: number) => request<RemoteSession>(`/api/hosts/${id}/remote`),
+  /** Installs the session and starts the packages installing, which the host
+   *  gets on with by itself. Idempotent, and it keeps the password and the
+   *  browser profile: changing a screen size should not sign anybody out. */
+  setupRemote: (
+    id: number,
+    input: { geometry?: string; port?: number; homepage?: string; reset?: boolean } = {},
+  ) => request<RemoteSession>(`/api/hosts/${id}/remote`, { method: 'POST', ...json(input) }),
+  /** Starts or stops it. A start carries the page to open, so opening a site
+   *  is one round trip rather than a URL typed over VNC on a phone keyboard. */
+  remoteAction: (id: number, action: 'start' | 'stop', url = '') =>
+    request<RemoteSession>(`/api/hosts/${id}/remote/action`, {
+      method: 'POST',
+      ...json({ action, url }),
+    }),
+  /** Takes the session off the host. Purging takes the browser profile with it,
+   *  and with it every site it was signed into. The downloads always stay. */
+  removeRemote: (id: number, purge = false) =>
+    request<void>(`/api/hosts/${id}/remote${purge ? '?purge=true' : ''}`, { method: 'DELETE' }),
 
   /** An empty user means the account Deployer signs in as. */
   crontab: (id: number, user = '') =>

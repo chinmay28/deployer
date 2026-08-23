@@ -358,6 +358,59 @@ the same on every version worth supporting, and unlike `status` it never wraps,
 colours or truncates what it says. None of these screens poll — each is an SSH
 session, so they refresh when you ask.
 
+**Remote session** runs a browser on the host and hands it to your phone. It is
+the answer to the one job none of the rest of this can do: a file behind a login.
+Some things can only be done by a person in front of a browser — signing in,
+clicking through a consent page, agreeing to something — and the machine that
+should end up holding the file is the host, not the phone. So the browser runs
+there, and a download lands in the host's own Downloads directory, with no
+transfer, no second copy and no phone in the middle.
+
+Setting it up installs Xvfb, x11vnc, noVNC and a browser with apt, writes a
+service, and stores a VNC password the screen shows you. That is minutes of
+package installing on a Pi, so it runs **detached** — the same trick a
+self-update uses, and for the same reason: an SSH session that ends takes its
+command with it, and a phone that locks its screen must not be able to kill apt
+half way through a package. The screen follows the log while it happens and says
+what stopped it if something does.
+
+**The session gets a screen of its own rather than the host's.** Attaching to the
+real display is the familiar recipe and the wrong one here: it needs a desktop to
+already be running, it cannot attach to a Wayland session at all — which is what
+Raspberry Pi OS has run by default since Bookworm — and what it shows is whatever
+the machine is showing to anyone walking past it. A private Xvfb screen works the
+same on a headless Pi as on one with a monitor, and nothing on the real display
+changes while you use it.
+
+**It is off unless you turn it on.** The unit has no `[Install]` section, so
+systemd calls it static: it cannot be enabled and does not come back after a
+reboot. A logged-in browser is a bearer of every credential you typed into it,
+and one that runs all week is a worse thing to own than one that runs for the two
+minutes it takes to fetch a file. Start it, open it, take the file, stop it —
+which is four taps, and the screen is laid out for exactly that.
+
+**The profile survives, which is what makes the second visit a tap.** The browser
+keeps its profile in the SSH user's home, so a site signed into last week is
+still signed in this week, and the sign-in with the authenticator app happens
+once rather than every time. It is also why removing the session asks whether to
+take the profile with it: throwing away the logins silently would be the wrong
+kind of quiet. Downloads are never removed either way.
+
+Two details make it usable from a phone rather than merely possible. The address
+bar is on Deployer's screen, not in the session — typing a URL into a browser
+over VNC on a phone keyboard is the worst part of doing this by hand — so
+starting the session and opening the site are one tap and one round trip. And
+Chromium's "ask where to save each file" is turned off in the profile before it
+first runs, so a download needs no dialog: it goes straight to
+`~/Downloads`, which the same screen then lists, newest first, with a way
+through to the file browser.
+
+The link Deployer offers carries the VNC password in its query string. That is a
+real trade-off and worth naming: it puts eight characters into a browser history
+on your LAN, and what it buys is not typing them on a phone every time. The VNC
+server itself only ever listens on the host's loopback interface — the one door
+in is the noVNC port, which is `6080` unless you change it.
+
 **Scheduled jobs** edits the crontab, the whole file at once, the way
 `crontab -e` does — for the user Deployer signs in as, and for root. Cron is
 what validates it: a crontab it refuses to parse is not installed, the old one
@@ -480,6 +533,10 @@ it accordingly:
   not in the log. It exists for one request. It does cross the network to
   Deployer in the clear if you are on plain `http`, so set a host up from a
   network you trust, the same one you would type the PIN over.
+- A **remote session is a signed-in browser** sitting on the host: whoever can
+  reach its noVNC port and read its password — which this UI shows — is signed
+  in to whatever you were. It is off by default, cannot be enabled to start at
+  boot, and is worth stopping when you are done rather than leaving up.
 - The systemd unit runs as a dedicated non-root user with `NoNewPrivileges`,
   `ProtectSystem=strict`, an empty capability set and a system-call filter.
 - Rotating the key in Settings invalidates every host until you install the new
@@ -605,6 +662,10 @@ Quoting is tested the same way — every path a person could type is handed to
 | `GET`    | `/api/hosts/{id}/services/logs`     | its journal, `?name=&lines=` (20–2000) |
 | `POST`   | `/api/hosts/{id}/services/action`   | start, stop, restart, reload, enable or disable |
 | `POST`   | `/api/hosts/{id}/services/reload`   | `daemon-reload` after a unit file changes |
+| `GET`    | `/api/hosts/{id}/remote`            | the host's browser session: what is installed, how far a setup got, whether it is running, and what has been downloaded |
+| `POST`   | `/api/hosts/{id}/remote`            | install or reconfigure it; the packages install detached |
+| `DELETE` | `/api/hosts/{id}/remote`            | remove it, `?purge=true` to delete the browser profile too |
+| `POST`   | `/api/hosts/{id}/remote/action`     | start it (with the page to open) or stop it |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |
 | `DELETE` | `/api/hosts/{id}/files`             | delete `?path=`, `&recursive=true` for a full directory |
 | `GET`    | `/api/hosts/{id}/files/content`     | read a file, `?path=`                |
@@ -641,7 +702,8 @@ server/
   internal/metrics/  the agentless /proc probe and its parser
   internal/hosts/    connect, test, and poll hosts
   internal/hostops/  managing a host: files, services, crontab, power state,
-                     and guessing why it last restarted
+                     the remote browser session, and guessing why it last
+                     restarted
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate

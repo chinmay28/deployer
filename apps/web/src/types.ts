@@ -368,6 +368,56 @@ export interface JournalStorage {
   blocked?: string
 }
 
+/** Where a host's remote session got to. "absent" means it has never been set
+ *  up here; "running" is an install in flight; "failed" carries the exit status
+ *  of the one that did not finish. */
+export type RemoteSetupState = 'absent' | 'running' | 'ok' | 'failed'
+
+/** One file in the host's downloads directory — the point of the whole screen,
+ *  so the newest few are reported with it. */
+export interface RemoteFile {
+  name: string
+  size: number
+  /** How long ago it was written, as the host counts. */
+  ageS: number
+}
+
+/** A browser running on the host, driven from the phone: everything the screen
+ *  needs about it in one answer. */
+export interface RemoteSession {
+  /** The systemd unit, so the session is a service like any other. */
+  unit: string
+  setup: RemoteSetupState
+  /** The exit status behind a failed setup. */
+  setupExit?: number
+  /** The tail of the install log: what it is doing, or why it stopped. */
+  setupLog?: string
+  /** Whether a session could be started right now. */
+  ready: boolean
+  /** What is not installed yet, where that is what stands in the way. */
+  missing?: string[]
+  /** The browser the session will run, as the host names it. */
+  browser?: string
+  running: boolean
+  /** systemd's own words, for when "running" is not the whole story. */
+  active?: string
+  sub?: string
+  port: number
+  geometry: string
+  /** Generated on the host and kept there; shown so it can be pasted, and
+   *  carried in the link so nobody has to type it on a phone. */
+  password?: string
+  /** The page the session opens with. */
+  homepage?: string
+  /** The account it runs as — whose Downloads a file lands in. */
+  user: string
+  downloads?: string
+  profile?: string
+  files: RemoteFile[]
+  /** Where noVNC answers on this host, ready to connect. */
+  url: string
+}
+
 export type HealthType = 'none' | 'http' | 'systemd'
 export type HealthStatus = 'unknown' | 'passing' | 'failing' | 'unchecked'
 
