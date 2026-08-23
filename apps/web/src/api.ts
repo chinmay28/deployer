@@ -159,6 +159,15 @@ export const api = {
       method: 'POST',
       ...json({ action, id: torrentId, data }),
     }),
+  /** Tells deluge what to do with a torrent once it has finished: how much to
+   *  upload before it stops seeding, and whether the entry then goes from the
+   *  list. It is deluge's own setting, so it holds when nobody is looking —
+   *  which is when torrents finish. A ratio of 0 means keep seeding. */
+  torrentSeeding: (id: number, ratio: number, remove: boolean) =>
+    request<TorrentDaemon>(`/api/hosts/${id}/torrents/action`, {
+      method: 'POST',
+      ...json({ action: 'seeding', ratio, remove }),
+    }),
   /** Writes the daemon onto the host, or rewrites the one already there.
    *  Idempotent: the password and everything already downloading stay, so
    *  changing the folder does not restart a download. */

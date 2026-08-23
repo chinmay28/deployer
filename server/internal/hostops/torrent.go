@@ -138,6 +138,14 @@ type TorrentDaemon struct {
 	// Torrents is what the daemon is working on, newest first as deluge lists
 	// them.
 	Torrents []Torrent `json:"torrents"`
+	// Asked reports that deluge itself answered this time. When it is false the
+	// list is empty because nobody could be asked — the daemon is stopped, or it
+	// did not answer — rather than because there is nothing to download, and a
+	// screen that could not tell those apart would throw away a running download
+	// the first time deluge was slow.
+	Asked bool `json:"asked"`
+	// Seeding is what deluge will do with a torrent once it has finished.
+	Seeding TorrentSeeding `json:"seeding"`
 	// Trouble is what deluge-console said when it could not be asked. It is a
 	// state the screen reports rather than an error the request fails with:
 	// everything else on this page is still true and still worth showing.
@@ -180,6 +188,30 @@ type Torrent struct {
 	Peers      int `json:"peers"`
 	PeersTotal int `json:"peersTotal"`
 }
+
+// TorrentSeeding is what deluge does with a torrent once it has finished
+// downloading. Left alone it seeds for ever, which is polite and is also how a
+// list nobody is watching fills up with things that finished last month.
+type TorrentSeeding struct {
+	// Ratio is what a torrent has to have uploaded, against what it downloaded,
+	// before deluge stops seeding it. Zero means never stop.
+	Ratio float64 `json:"ratio"`
+	// Remove takes the entry out of deluge when it stops, rather than leaving it
+	// paused in the list. The files are never touched — deluge removes the
+	// torrent, not the download.
+	Remove bool `json:"remove"`
+}
+
+// seedingKeys are deluge's own names for that, asked for and set as they are.
+var seedingKeys = []string{"stop_seed_at_ratio", "stop_seed_ratio", "remove_seed_at_ratio"}
+
+// seedingLine is one of them coming back: "stop_seed_ratio: 2.0".
+var seedingLine = regexp.MustCompile(`^(stop_seed_at_ratio|stop_seed_ratio|remove_seed_at_ratio):\s*(\S+)\s*$`)
+
+// MaxSeedRatio is as far as this will go. A ratio is a multiple of what was
+// downloaded, so ten is a great deal of uploading and a hundred is a typing
+// mistake.
+const MaxSeedRatio = 100
 
 // torrentPieces is what a host needs before any of this works: the daemon, and
 // the client Deployer drives it with. Both come from deluge's own packages, and
@@ -253,7 +285,8 @@ func consoleScript() string {
 
 // torrentStatusScript answers everything about the downloader in one round
 // trip: what deluge is installed, what Deployer has written, what systemd makes
-// of the unit, how much disk is left, and what the daemon is working on.
+// of the unit, how much disk is left, what the daemon is working on, and what
+// it has been told to do with a torrent that has finished.
 //
 // It runs as the SSH user rather than as root, which is the exception on this
 // screen and the correct one: the daemon runs as that user, its config
@@ -261,6 +294,16 @@ func consoleScript() string {
 // there. A status probe that ran as root would leave root-owned files in a
 // directory the daemon then cannot write, which is a fault Deployer would have
 // caused rather than found.
+//
+// It says which of the four things it did — asked, found the daemon stopped,
+// found no console, found no downloader — because an empty listing means
+// something different in each case, and a screen that could not tell them apart
+// would replace a running download with "nothing is downloading" the first time
+// deluge was slow to answer.
+//
+// The seeding policy rides along in the same console rather than a second one.
+// Starting deluge-console is a second or two of python, and this is the one
+// request on this screen that is asked again every few seconds.
 //
 // Nothing here writes, so it is safe to ask as often as a screen wants to.
 const torrentStatusScript = `set -u
@@ -303,13 +346,23 @@ d="$r$dl"
 while [ -n "$d" ] && [ ! -d "$d" ]; do d=$(dirname -- "$d"); [ "$d" = / ] && break; done
 df -Pk -- "$d" 2>/dev/null | tail -1
 
-printf '@@torrents\n'
 # Asking a daemon that is not running is a slow way of being told it is not
 # running, and systemd already knows.
-if [ -f "$conf/deployer.conf" ] && command -v deluge-console >/dev/null 2>&1 &&
-   { ! command -v systemctl >/dev/null 2>&1 || systemctl is-active --quiet -- %[4]s 2>/dev/null; }; then
-  console "info --verbose" | head -c %[5]d
+list=""
+ask="not-set-up"
+if [ -f "$conf/deployer.conf" ]; then
+  if ! command -v deluge-console >/dev/null 2>&1; then
+    ask="no-console"
+  elif command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet -- %[4]s 2>/dev/null; then
+    ask="stopped"
+  else
+    list=$(console "info --verbose; config %[6]s")
+    ask="asked:$?"
+  fi
 fi
+printf '@@ask\n%%s\n' "$ask"
+printf '@@torrents\n'
+printf '%%s\n' "$list" | head -c %[5]d
 
 # Reading the state of the downloader never fails: every part of it is
 # optional, and a piece that is not there is an answer rather than an error.
@@ -330,7 +383,7 @@ func (s *Service) TorrentStatus(ctx context.Context, h *store.Host) (*TorrentDae
 	}
 	script := fmt.Sprintf(torrentStatusScript,
 		torrentStateDir, consoleScript(), strings.Join(torrentPieces, " "),
-		TorrentUnit, MaxTorrentListBytes)
+		TorrentUnit, MaxTorrentListBytes, strings.Join(seedingKeys, " "))
 	res, err := s.run(ctx, h, asUser(script, "", h.Username), "")
 	if err != nil {
 		return nil, err
@@ -402,8 +455,57 @@ func parseTorrentStatus(out, user string) *TorrentDaemon {
 	daemon.Ready = daemon.Installed && daemon.Configured && props["LoadState"] == "loaded"
 
 	daemon.Free, daemon.Capacity = parseDiskFree(first(found["disk"]))
-	daemon.Torrents, daemon.Trouble = parseTorrentList(strings.Join(found["torrents"], "\n"))
+
+	// The listing and the seeding policy come back from one console, so they
+	// arrive in one section and the settings are taken out of it first.
+	listing, seeding := splitSeeding(strings.Join(found["torrents"], "\n"))
+	daemon.Seeding = seeding
+	daemon.Torrents, daemon.Trouble = parseTorrentList(listing)
+
+	// What the probe managed to do decides what an empty list means.
+	ask := first(found["ask"])
+	if code, ok := strings.CutPrefix(ask, "asked:"); ok {
+		daemon.Asked = strings.TrimSpace(code) == "0"
+		if !daemon.Asked && daemon.Trouble == "" {
+			daemon.Trouble = "deluge did not answer (exit " + strings.TrimSpace(code) + ")"
+		}
+	}
+	// A daemon that is stopped is not trouble: the screen says so already, and
+	// says it in a place with a button under it.
+	if ask == "stopped" {
+		daemon.Trouble = ""
+	}
 	return daemon
+}
+
+// splitSeeding takes the three settings lines out of what the console printed
+// and hands back the rest, which is the torrent listing.
+func splitSeeding(out string) (string, TorrentSeeding) {
+	seeding := TorrentSeeding{}
+	stop := false
+	lines := strings.Split(out, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		match := seedingLine.FindStringSubmatch(strings.TrimSpace(line))
+		if match == nil {
+			kept = append(kept, line)
+			continue
+		}
+		switch match[1] {
+		case "stop_seed_at_ratio":
+			stop = strings.EqualFold(match[2], "true")
+		case "stop_seed_ratio":
+			seeding.Ratio, _ = strconv.ParseFloat(match[2], 64)
+		case "remove_seed_at_ratio":
+			seeding.Remove = strings.EqualFold(match[2], "true")
+		}
+	}
+	// Deluge keeps a ratio whether or not it is using one, so the switch is
+	// what decides: not stopping at all is a ratio of nothing.
+	if !stop {
+		seeding.Ratio = 0
+	}
+	return strings.Join(kept, "\n"), seeding
 }
 
 // parseDiskFree reads one `df -Pk` line: the filesystem, its size, what is
@@ -1091,6 +1193,99 @@ func (s *Service) TorrentAction(ctx context.Context, h *store.Host, id, action s
 		}
 	}
 	return daemon, nil
+}
+
+// torrentSeedingScript tells deluge what to do with a torrent that has
+// finished. All three settings go in one console, because starting one is a
+// second of python and three of them would be three.
+const torrentSeedingScript = `set -u
+r=$1
+stop=$2
+ratio=$3
+remove=$4
+conf="$r%[1]s"
+%[2]s
+
+[ -f "$conf/deployer.conf" ] || { printf 'this host has no downloader set up yet\n' >&2; exit 3; }
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl is-active --quiet -- %[3]s 2>/dev/null || exit 4
+fi
+
+out=$(console "config --set stop_seed_at_ratio $stop; config --set stop_seed_ratio $ratio; config --set remove_seed_at_ratio $remove")
+code=$?
+printf '@@code\n%%s\n' "$code"
+printf '@@out\n%%s\n' "$out"
+exit 0
+`
+
+// SetTorrentSeeding decides what becomes of a torrent once it has finished
+// downloading: how long it keeps seeding, and whether its entry is then taken
+// out of the list.
+//
+// It is deluge's own setting rather than a rule Deployer enforces, which is
+// what makes it hold when nobody is looking at the screen — the daemon applies
+// it to torrents that finish at three in the morning, which is when they
+// finish.
+//
+// The daemon has to be running to be told, so a stopped one is started first,
+// the same way adding a torrent does it.
+func (s *Service) SetTorrentSeeding(ctx context.Context, h *store.Host, in TorrentSeeding) (*TorrentDaemon, error) {
+	ratio, err := cleanSeedRatio(in.Ratio)
+	if err != nil {
+		return nil, err
+	}
+	// Removing an entry only ever happens where seeding stops, so asking for
+	// one without the other is a setting that would never fire.
+	if in.Remove && ratio == 0 {
+		return nil, invalid("deluge can only remove a torrent it has stopped seeding, so give it a ratio")
+	}
+	script := fmt.Sprintf(torrentSeedingScript, torrentStateDir, consoleScript(), TorrentUnit)
+	cmd := asUser(script, "",
+		delugeBool(ratio > 0), strconv.FormatFloat(ratio, 'f', 2, 64), delugeBool(in.Remove))
+
+	res, err := s.run(ctx, h, cmd, "")
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode == 4 {
+		// Nothing can be told to a daemon that is not running.
+		if err := s.Act(ctx, h, TorrentUnit, "start"); err != nil {
+			return nil, err
+		}
+		if res, err = s.run(ctx, h, cmd, ""); err != nil {
+			return nil, err
+		}
+	}
+	if res.ExitCode == 3 {
+		return nil, invalid("this host has no downloader set up yet")
+	}
+	if res.ExitCode != 0 {
+		return nil, failure(res, "could not change the seeding rule on "+h.Name)
+	}
+	if err := torrentConsoleError(res.Stdout); err != nil {
+		return nil, err
+	}
+	return s.TorrentStatus(ctx, h)
+}
+
+// cleanSeedRatio checks a ratio. Zero is "never stop", which is deluge's own
+// default and a perfectly good answer.
+func cleanSeedRatio(ratio float64) (float64, error) {
+	if ratio == 0 {
+		return 0, nil
+	}
+	if ratio < 0.1 || ratio > MaxSeedRatio {
+		return 0, invalid("a ratio between 0.1 and %d, or none at all to keep seeding", MaxSeedRatio)
+	}
+	return ratio, nil
+}
+
+// delugeBool renders a flag the way deluge's own config command reads it.
+func delugeBool(on bool) string {
+	if on {
+		return "True"
+	}
+	return "False"
 }
 
 // StartTorrent and StopTorrent run the daemon. They are systemctl like

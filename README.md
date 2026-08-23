@@ -505,6 +505,31 @@ filling a Pi's card is the ordinary way this goes wrong, and the figure belongs
 on the screen before the download rather than after it. It is an ordinary
 service, so its journal is on the **Services** screen with everything else.
 
+**It keeps following after the download has finished.** A torrent that finishes
+is not done — it seeds, and the ratio and the upload figure are what somebody is
+watching then — so the screen carries on refreshing while the daemon is up,
+slowly once nothing is downloading, and not at all while the phone is locked or
+on another app. Coming back to it asks again straight away.
+
+**An empty answer is not the same as an empty list**, and the screen no longer
+confuses them. A probe that could not reach deluge — the daemon busy, the
+console slow to start, the command cut short — used to come back with no
+torrents and take a running download off the screen until you left and returned.
+The probe now says which of the four things happened: it asked, the daemon is
+stopped, there is no console, or there is no downloader. An answer that never
+reached deluge leaves the last one on the screen and says that is what it is.
+
+**What happens after seeding is deluge's own rule.** Left alone it seeds for
+ever, which is the polite thing to do and is also how a list nobody is watching
+fills up with things that finished last month. The screen sets a ratio — what a
+torrent uploads against what it downloaded, which gives a slow torrent longer
+than a fast one — and optionally has deluge drop the entry from the list when it
+stops. That is `stop_seed_at_ratio`, `stop_seed_ratio` and
+`remove_seed_at_ratio` on the daemon itself rather than anything Deployer
+enforces, so it holds at three in the morning, which is when torrents finish.
+Dropping the entry never touches the files: deluge removes the torrent, not the
+download.
+
 Removing a torrent asks whether the part already downloaded goes with it, because
 that is the one thing here that cannot be undone. Removing the downloader never
 touches the files at all: the service and deluge's state go, deluge stays
@@ -842,7 +867,7 @@ Quoting is tested the same way — every path a person could type is handed to
 | `POST`   | `/api/hosts/{id}/remote/action`     | start it (with the page to open) or stop it |
 | `GET`    | `/api/hosts/{id}/torrents`          | the downloader: whether deluge is installed, what is set up, and what it is downloading |
 | `POST`   | `/api/hosts/{id}/torrents`          | add one: a magnet link, the address of a `.torrent`, or the file itself, base64 |
-| `POST`   | `/api/hosts/{id}/torrents/action`   | start or stop the daemon; pause, resume or remove a torrent (`"data":true` deletes what it downloaded) |
+| `POST`   | `/api/hosts/{id}/torrents/action`   | start or stop the daemon; pause, resume or remove a torrent (`"data":true` deletes what it downloaded); or `"seeding"` with a `ratio` and `remove` to set what happens after a torrent finishes |
 | `POST`   | `/api/hosts/{id}/torrents/setup`    | write the daemon onto the host, or change where it downloads |
 | `DELETE` | `/api/hosts/{id}/torrents/setup`    | take it off; deluge and the downloaded files stay |
 | `GET`    | `/api/hosts/{id}/files`             | list a directory, `?path=` (default: home) |

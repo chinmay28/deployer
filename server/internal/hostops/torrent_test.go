@@ -34,7 +34,7 @@ func torrentSetupFor(root, user, downloads, reset string) string {
 func torrentStatusFor(root, user string) string {
 	return asUser(fmt.Sprintf(torrentStatusScript,
 		torrentStateDir, consoleScript(), strings.Join(torrentPieces, " "),
-		TorrentUnit, MaxTorrentListBytes), root, user)
+		TorrentUnit, MaxTorrentListBytes, strings.Join(seedingKeys, " ")), root, user)
 }
 
 func torrentAddFor(root, name, source, path string) string {
@@ -109,11 +109,12 @@ func stateDir(root string) string { return filepath.Join(root, torrentStateDir) 
 // syntax error would only show up as a downloader that will not answer.
 func TestTorrentScriptsParse(t *testing.T) {
 	scripts := map[string]string{
-		"setup":  renderTorrentSetup(),
-		"status": fmt.Sprintf(torrentStatusScript, torrentStateDir, consoleScript(), "deluged", TorrentUnit, 1024),
-		"add":    fmt.Sprintf(torrentAddScript, torrentStateDir, consoleScript(), TorrentUnit),
-		"action": fmt.Sprintf(torrentActionScript, torrentStateDir, consoleScript()),
-		"remove": fmt.Sprintf(torrentRemoveScript, torrentStateDir, TorrentUnit),
+		"setup":   renderTorrentSetup(),
+		"status":  fmt.Sprintf(torrentStatusScript, torrentStateDir, consoleScript(), "deluged", TorrentUnit, 1024, "a b"),
+		"seeding": fmt.Sprintf(torrentSeedingScript, torrentStateDir, consoleScript(), TorrentUnit),
+		"add":     fmt.Sprintf(torrentAddScript, torrentStateDir, consoleScript(), TorrentUnit),
+		"action":  fmt.Sprintf(torrentActionScript, torrentStateDir, consoleScript()),
+		"remove":  fmt.Sprintf(torrentRemoveScript, torrentStateDir, TorrentUnit),
 	}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
@@ -977,5 +978,124 @@ func TestParseTorrentListIgnoresHarmlessNoise(t *testing.T) {
 	_, trouble := parseTorrentList("DeprecationWarning: the twisted reactor is old\n")
 	if trouble != "" {
 		t.Errorf("trouble = %q, want a notice to be left alone", trouble)
+	}
+}
+
+// An empty list means different things depending on what the probe managed to
+// do, and a screen that could not tell them apart would throw away a running
+// download the first time deluge was slow to answer.
+func TestTorrentStatusSaysWhetherDelugeAnswered(t *testing.T) {
+	root := t.TempDir()
+	work := t.TempDir()
+	stubs := rootStubs(delugeStubs(t, work, `printf 'Failed to connect to 127.0.0.1:58946\n'; exit 1`))
+	bin := stubBin(t, stubs)
+	if out, code := runScript(t, torrentSetupFor(root, "pi", "", ""), "", bin); code != 0 {
+		t.Fatalf("setup exited %d: %s", code, out)
+	}
+
+	out, code := runScript(t, torrentStatusFor(root, "pi"), "", bin)
+	if code != 0 {
+		t.Fatalf("status exited %d: %s", code, out)
+	}
+	daemon := parseTorrentStatus(out, "pi")
+	if daemon.Asked {
+		t.Error("a console that failed reads as an answer")
+	}
+	if daemon.Trouble == "" {
+		t.Error("nothing was said about why there is no list")
+	}
+
+	// A daemon that is stopped is not trouble: the screen says so already, in a
+	// place with a button under it.
+	stubs["systemctl"] = `case "$1" in is-active) exit 3;; esac
+printf 'LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=enabled\n'`
+	out, code = runScript(t, torrentStatusFor(root, "pi"), "", stubBin(t, stubs))
+	if code != 0 {
+		t.Fatalf("status exited %d: %s", code, out)
+	}
+	stopped := parseTorrentStatus(out, "pi")
+	if stopped.Asked {
+		t.Error("a stopped daemon reads as having answered")
+	}
+	if stopped.Trouble != "" {
+		t.Errorf("trouble = %q — a stopped daemon is not trouble", stopped.Trouble)
+	}
+}
+
+// The seeding rule rides back in the same console as the listing, so it is
+// taken out of it before the torrents are read.
+func TestSplitSeeding(t *testing.T) {
+	listing, seeding := splitSeeding(`Name: A Film
+ID: ` + strings.Repeat("a", 40) + `
+remove_seed_at_ratio: True
+stop_seed_at_ratio: True
+stop_seed_ratio: 1.5
+`)
+	if strings.Contains(listing, "stop_seed") {
+		t.Errorf("the settings were left in the listing:\n%s", listing)
+	}
+	if seeding.Ratio != 1.5 || !seeding.Remove {
+		t.Errorf("seeding = %+v", seeding)
+	}
+	torrents, trouble := parseTorrentList(listing)
+	if len(torrents) != 1 || trouble != "" {
+		t.Errorf("torrents = %+v, trouble = %q", torrents, trouble)
+	}
+
+	// Deluge keeps a ratio whether or not it is using one, so the switch is
+	// what decides — otherwise a screen would show a rule that never fires.
+	_, off := splitSeeding("stop_seed_at_ratio: False\nstop_seed_ratio: 2.0\nremove_seed_at_ratio: False\n")
+	if off.Ratio != 0 || off.Remove {
+		t.Errorf("a rule that is switched off reads as %+v", off)
+	}
+}
+
+// The seeding rule is deluge's own setting, so it holds when nobody is looking
+// at the screen — which is when torrents finish.
+func TestSeedingScriptTellsDeluge(t *testing.T) {
+	root := t.TempDir()
+	work := t.TempDir()
+	bin := stubBin(t, rootStubs(delugeStubs(t, work, `printf 'Configuration value successfully updated.\n'`)))
+	if out, code := runScript(t, torrentSetupFor(root, "pi", "", ""), "", bin); code != 0 {
+		t.Fatalf("setup exited %d: %s", code, out)
+	}
+
+	script := asUser(fmt.Sprintf(torrentSeedingScript, torrentStateDir, consoleScript(), TorrentUnit),
+		root, "True", "1.50", "True")
+	out, code := runScript(t, script, "", bin)
+	if code != 0 {
+		t.Fatalf("seeding exited %d: %s", code, out)
+	}
+	if err := torrentConsoleError(out); err != nil {
+		t.Fatalf("deluge would not take the rule: %v", err)
+	}
+	log := read(t, filepath.Join(work, "console.log"))
+	for _, want := range []string{
+		"config --set stop_seed_at_ratio True",
+		"config --set stop_seed_ratio 1.50",
+		"config --set remove_seed_at_ratio True",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("deluge was never told %q:\n%s", want, log)
+		}
+	}
+	// One console for three settings: starting one is a second of python.
+	if lines := strings.Count(strings.TrimSpace(log), "\n") + 1; lines != 1 {
+		t.Errorf("the rule took %d consoles, want 1:\n%s", lines, log)
+	}
+}
+
+func TestCleanSeedRatio(t *testing.T) {
+	// Nothing at all is a perfectly good answer: it is deluge's own default.
+	if got, err := cleanSeedRatio(0); err != nil || got != 0 {
+		t.Errorf("cleanSeedRatio(0) = %v, %v", got, err)
+	}
+	if got, err := cleanSeedRatio(1.5); err != nil || got != 1.5 {
+		t.Errorf("cleanSeedRatio(1.5) = %v, %v", got, err)
+	}
+	for _, ratio := range []float64{-1, 0.01, MaxSeedRatio + 1, 1e9} {
+		if _, err := cleanSeedRatio(ratio); err == nil {
+			t.Errorf("cleanSeedRatio(%v) allowed it", ratio)
+		}
 	}
 }
