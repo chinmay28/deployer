@@ -140,6 +140,10 @@ export default function HostRemote() {
             )
           )}
 
+          {(session.running || session.active === 'failed') && (
+            <SessionLog hostId={hostId} unit={session.unit} />
+          )}
+
           <Downloads session={session} hostId={hostId} />
 
           {(session.ready || session.setup === 'failed') && (
@@ -392,7 +396,8 @@ function Live({
         <p className="sub" style={{ marginBottom: 0 }}>
           It opens outside Deployer, in your phone's browser. Turn the phone sideways: a desktop
           screen on a portrait phone is mostly scrolling. Downloads need no dialog — they go
-          straight to {session.downloads ?? 'the host'}.
+          straight to {session.downloads ?? 'the host'}. A screen that is black with only a mouse
+          pointer is the browser failing to start, and the journal below says why.
         </p>
       </Card>
 
@@ -415,6 +420,40 @@ function Live({
         <button className="secondary block" onClick={onStop} disabled={!!busy}>
           {busy === 'stop' ? 'Stopping…' : 'Stop the session'}
         </button>
+      </Card>
+    </>
+  )
+}
+
+/**
+ * What the session is saying, while it is running or after it has failed.
+ *
+ * A session that comes up black — an X screen with nothing drawn on it — has
+ * exactly one symptom and any number of causes, and the browser's own output is
+ * what tells them apart. The Services screen has the same journal, but somebody
+ * looking at an empty screen should not have to know that.
+ */
+function SessionLog({ hostId, unit }: { hostId: number; unit: string }) {
+  const { data, error, reload } = useLoader(() => api.serviceLog(hostId, unit, 100), [hostId, unit])
+  return (
+    <>
+      <SectionTitle>What it is saying</SectionTitle>
+      <Card>
+        <div className="row between" style={{ marginBottom: 10 }}>
+          <span className="sub">The last of the session's journal</span>
+          <button className="ghost" onClick={reload}>
+            Refresh
+          </button>
+        </div>
+        {error ? (
+          <Banner tone="bad">{error}</Banner>
+        ) : !data ? (
+          <div className="sub">Reading it…</div>
+        ) : data.content.trim() === '' ? (
+          <div className="sub">Nothing yet.</div>
+        ) : (
+          <pre className="log">{data.content}</pre>
+        )}
       </Card>
     </>
   )

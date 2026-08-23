@@ -3,6 +3,7 @@ package hostops
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -651,5 +652,84 @@ func TestRemoteURL(t *testing.T) {
 	}
 	if got := RemoteURL("", session); got != "" {
 		t.Errorf("no address means no link, got %q", got)
+	}
+}
+
+// The session script's own behaviour, run for real: a browser that will not
+// start has to say so somewhere a person can read it. This is the test the
+// first version of this file did not have, and its absence cost an evening —
+// the browser's output went to /dev/null, so a session that never came up
+// looked exactly like a session with nothing wrong except a black screen.
+func TestSessionScriptReportsABrowserThatWillNotStart(t *testing.T) {
+	// The script waits for the X server's socket at the path X itself uses, so
+	// the stub has to put one there. A machine that will not allow that is one
+	// where this test cannot run.
+	const display = "91"
+	socket := "/tmp/.X11-unix/X" + display
+	if err := os.MkdirAll("/tmp/.X11-unix", 0o1777); err != nil {
+		t.Skipf("no /tmp/.X11-unix to fake an X server in: %v", err)
+	}
+	if f, err := os.Create(socket); err != nil {
+		t.Skipf("cannot write %s: %v", socket, err)
+	} else {
+		f.Close()
+	}
+	t.Cleanup(func() { os.Remove(socket) })
+
+	root := t.TempDir()
+	conf := filepath.Join(root, "conf")
+	if err := os.MkdirAll(conf, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(conf, "homepage"), []byte("https://example.com/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := stubBin(t, map[string]string{
+		"Xvfb":       `sleep 30`,
+		"x11vnc":     `sleep 30`,
+		"websockify": `sleep 30`,
+		// The failure a real Chromium reports when it cannot use its profile —
+		// on stderr, which is the stream that used to be thrown away.
+		"chromium": `printf 'The profile appears to be in use by another Chromium process\n' >&2; exit 1`,
+	})
+
+	script := filepath.Join(root, "session.sh")
+	if err := os.WriteFile(script, []byte(fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " "))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// It runs until it is stopped, the way systemd runs it, so the test stops it.
+	run := exec.Command("timeout", "6", "sh", script, "1280x800", display, "5999", "6080",
+		conf, filepath.Join(root, "profile"), filepath.Join(root, "Downloads"))
+	run.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	out, _ := run.CombinedOutput()
+	log := string(out)
+
+	// The browser's own words, which are the only thing that ever says why.
+	if !strings.Contains(log, "The profile appears to be in use") {
+		t.Errorf("the browser's output never reached the journal:\n%s", log)
+	}
+	// Deployer's reading of them, for the times when the browser says nothing.
+	if !strings.Contains(log, "exited after") {
+		t.Errorf("a browser dying on the spot should be reported as such:\n%s", log)
+	}
+	// And which browser it was, since a distribution that ships a snap wrapper
+	// leaves a binary on the PATH that cannot run.
+	if !strings.Contains(log, "chromium is "+filepath.Join(bin, "chromium")) {
+		t.Errorf("the session should name the browser it resolved:\n%s", log)
+	}
+
+	// The lock a crashed browser leaves behind is cleared on the way in;
+	// leaving it is what turns one crash into a session that never works again.
+	if _, err := os.Stat(filepath.Join(root, "profile", "SingletonLock")); err == nil {
+		t.Error("a stale singleton lock survived the start")
+	}
+	// The profile was seeded before the browser ran, which is what stops
+	// Chromium asking where to save every file over VNC.
+	prefs, err := os.ReadFile(filepath.Join(root, "profile", "Default", "Preferences"))
+	if err != nil {
+		t.Fatalf("the profile was not seeded: %v", err)
+	}
+	if !strings.Contains(string(prefs), filepath.Join(root, "Downloads")) {
+		t.Errorf("downloads are not pointed at the host's own directory: %s", prefs)
 	}
 }

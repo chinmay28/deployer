@@ -405,6 +405,19 @@ first runs, so a download needs no dialog: it goes straight to
 `~/Downloads`, which the same screen then lists, newest first, with a way
 through to the file browser.
 
+**A session that comes up black — an X screen with a mouse pointer and nothing
+else — is the browser failing to start**, and that has any number of causes with
+only one symptom. So the browser's own output goes to the session's journal
+rather than to `/dev/null`, and the last of that journal is on this screen,
+under the way in, rather than only on the Services screen. Deployer adds its own
+line when the browser dies within seconds of starting, and names the binary it
+resolved: a distribution that ships its browser as a snap wrapper leaves
+something on the `PATH` that cannot run, and the resolved path is what says so.
+Chromium's own two traps are handled before they happen — the singleton lock a
+crashed browser leaves behind, which makes every later launch refuse, is cleared
+on the way in, and it is started with the GPU and `/dev/shm` assumptions a
+virtual screen on a small VM cannot meet turned off.
+
 The link Deployer offers carries the VNC password in its query string. That is a
 real trade-off and worth naming: it puts eight characters into a browser history
 on your LAN, and what it buys is not typing them on a phone every time. The VNC
