@@ -472,9 +472,26 @@ export interface TorrentDaemon {
   free?: number
   capacity?: number
   torrents: Torrent[]
+  /** Whether deluge itself answered this time. When it is false the list is
+   *  empty because nobody could be asked — the daemon is stopped, or it did
+   *  not answer — rather than because there is nothing to download. */
+  asked: boolean
+  /** What deluge does with a torrent once it has finished downloading. */
+  seeding: TorrentSeeding
   /** What deluge said when it could not be asked. A state to report rather
    *  than an error: everything else on the screen is still true. */
   trouble?: string
+}
+
+/** What becomes of a torrent once it has finished. Left alone deluge seeds for
+ *  ever, which is polite and is also how a list nobody is watching fills up
+ *  with things that finished last month. */
+export interface TorrentSeeding {
+  /** What a torrent has to upload, against what it downloaded, before deluge
+   *  stops seeding it. Zero means never stop. */
+  ratio: number
+  /** Whether the entry then goes from the list. The files are never touched. */
+  remove: boolean
 }
 
 export interface Torrent {

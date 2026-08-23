@@ -183,6 +183,32 @@ func TestRealDelugeTakesWhatDeployerSends(t *testing.T) {
 		t.Error("the torrent never reported itself paused")
 	}
 
+	// The seeding rule is deluge's own setting, so the test that it is spelt
+	// right is deluge accepting it and saying it back.
+	rule := asUser(fmt.Sprintf(torrentSeedingScript, torrentStateDir, consoleScript(), TorrentUnit),
+		root, "True", "1.50", "True")
+	out, code = runScript(t, rule, "", bin)
+	if code != 0 {
+		t.Fatalf("the seeding rule exited %d: %s", code, out)
+	}
+	if err := torrentConsoleError(out); err != nil {
+		t.Fatalf("deluge would not take the seeding rule: %v\n%s", err, out)
+	}
+	out, code = runScript(t, torrentStatusFor(root, currentUser(t)), "", bin)
+	if code != 0 {
+		t.Fatalf("status exited %d: %s", code, out)
+	}
+	after := parseTorrentStatus(out, currentUser(t))
+	if after.Seeding.Ratio != 1.5 || !after.Seeding.Remove {
+		t.Errorf("deluge came back with %+v, want the rule it was given", after.Seeding)
+	}
+	if !after.Asked {
+		t.Error("a daemon that answered does not read as having answered")
+	}
+	if len(after.Torrents) != 1 {
+		t.Errorf("the listing was lost alongside the settings: %+v", after.Torrents)
+	}
+
 	// And removing it, with the flags deluge 2.1 wants.
 	//
 	// What deluge-console says about a removal is worth nothing: it does the

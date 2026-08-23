@@ -76,14 +76,18 @@ func (s *Server) handleTorrentAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 type torrentActionInput struct {
-	// Action is "start" or "stop" for the daemon, or "pause", "resume" or
-	// "remove" for one torrent.
+	// Action is "start" or "stop" for the daemon, "pause", "resume" or "remove"
+	// for one torrent, and "seeding" for the rule that applies to all of them.
 	Action string `json:"action"`
 	// ID names the torrent, for the actions that act on one.
 	ID string `json:"id"`
 	// Data asks for the downloaded files to go too, on a remove. It is the one
 	// thing on this screen that cannot be undone, so it is never assumed.
 	Data bool `json:"data"`
+	// Ratio and Remove are the seeding rule: how much a torrent uploads before
+	// deluge stops seeding it, and whether its entry then goes from the list.
+	Ratio  float64 `json:"ratio"`
+	Remove bool    `json:"remove"`
 }
 
 // handleTorrentAction runs the daemon, or acts on one torrent. Both live here
@@ -112,9 +116,12 @@ func (s *Server) handleTorrentAction(w http.ResponseWriter, r *http.Request) {
 		daemon, err = s.Ops.StopTorrent(ctx, h)
 	case "pause", "resume", "remove":
 		daemon, err = s.Ops.TorrentAction(ctx, h, in.ID, in.Action, in.Data)
+	case "seeding":
+		daemon, err = s.Ops.SetTorrentSeeding(ctx, h,
+			hostops.TorrentSeeding{Ratio: in.Ratio, Remove: in.Remove})
 	default:
 		writeError(w, http.StatusBadRequest,
-			"the downloader can be started or stopped, and a torrent paused, resumed or removed")
+			"the downloader can be started or stopped, a torrent paused, resumed or removed, and the seeding rule set")
 		return
 	}
 	if err != nil {

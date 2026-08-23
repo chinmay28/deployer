@@ -15,7 +15,7 @@ import {
   useLoader,
 } from '../components/ui'
 import { bytes, uptime } from '../lib/format'
-import type { Torrent, TorrentDaemon } from '../types'
+import type { Torrent, TorrentDaemon, TorrentSeeding } from '../types'
 
 /** What a host without deluge needs run on it once. Deployer will not do it: a
  *  BitTorrent client is a decision about what a machine does on a network, and
@@ -27,13 +27,24 @@ const INSTALL = 'sudo apt install -y deluged deluge-console'
  *  a megabyte is a very large one. */
 const MAX_TORRENT_BYTES = 4 * 1024 * 1024
 
-/** How often to ask while something is moving. Every other host screen answers
- *  when you ask it to, because each answer is an SSH session — but a progress
- *  bar that only moved when you tapped it would not be a progress bar. It stops
- *  the moment nothing is downloading. */
+/** How often to ask while something is downloading. Every other host screen
+ *  answers when you ask it to, because each answer is an SSH session — but a
+ *  progress bar that only moved when you tapped it would not be a progress
+ *  bar. */
 const BUSY_POLL_MS = 5000
 
-/** The states that mean the numbers on this screen are still changing. */
+/** And how often while the daemon is up but nothing is downloading — seeding,
+ *  paused, waiting. The numbers still move, so the screen should still follow
+ *  them, but a torrent that has been seeding for a week does not need a Pi
+ *  woken every five seconds to say so. */
+const CALM_POLL_MS = 15000
+
+/** The ratios worth a tap. Zero is deluge's own default: seed until told to
+ *  stop. Two is the number a private tracker usually asks for. */
+const RATIOS = [0, 1, 2, 5]
+
+/** The states that mean the numbers are changing quickly. Seeding is not among
+ *  them on purpose: it changes slowly, so it is watched slowly. */
 const MOVING = ['downloading', 'checking', 'moving', 'allocating']
 
 /**
@@ -55,13 +66,13 @@ export default function HostTorrents() {
   const hostId = Number(id)
 
   const { data: host } = useLoader(() => api.host(hostId), [hostId])
-  const [watching, setWatching] = useState(false)
+  const [pace, setPace] = useState<number | undefined>(undefined)
   const {
     data: daemon,
     error,
     offline,
     reload,
-  } = useLoader(() => api.torrents(hostId), [hostId], watching ? BUSY_POLL_MS : undefined)
+  } = useLoader(() => api.torrents(hostId), [hostId], pace)
 
   const [busy, setBusy] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -69,10 +80,43 @@ export default function HostTorrents() {
   const [dropping, setDropping] = useState(false)
   const [folder, setFolder] = useState('')
 
-  // Polling belongs to a download and to nothing else: it stops the moment
-  // nothing is moving, and the screen goes back to answering when it is asked.
-  const moving = !!daemon?.torrents.some((t) => MOVING.includes(t.state.toLowerCase()))
-  useEffect(() => setWatching(moving), [moving])
+  /**
+   * The last list deluge actually gave.
+   *
+   * A probe that could not ask — the daemon busy, deluge slow to start, the
+   * command cut short — comes back with no torrents, and showing that as
+   * "nothing is downloading" would take a running download off the screen and
+   * make somebody go back and return to see it again. So an answer that did not
+   * reach deluge leaves the last one on the screen, and says it is the last
+   * one.
+   */
+  const known = useRef<Torrent[]>([])
+  useEffect(() => {
+    known.current = []
+  }, [hostId])
+  useEffect(() => {
+    if (daemon?.asked) known.current = daemon.torrents
+  }, [daemon])
+  const torrents = daemon?.asked ? daemon.torrents : known.current
+  const stale = !!daemon && !daemon.asked && known.current.length > 0
+
+  // A phone that is locked or on another app should not be asking a Pi
+  // anything, and a phone coming back should not have to be told to refresh:
+  // stopping and starting the timer does both, because starting it asks at
+  // once.
+  const visible = useVisible()
+  const moving = torrents.some((t) => MOVING.includes(t.state.toLowerCase()))
+
+  // Following it while it is only seeding is the point of the slower pace: the
+  // ratio and the upload figure are what somebody is watching then, and they
+  // are still moving after the download has finished.
+  useEffect(() => {
+    if (!visible || !daemon?.running) {
+      setPace(undefined)
+      return
+    }
+    setPace(moving ? BUSY_POLL_MS : CALM_POLL_MS)
+  }, [visible, daemon?.running, moving])
 
   // The folder field opens on the folder the host named — the one it is using,
   // or, before setup, the one it would use. It follows the host rather than
@@ -151,7 +195,7 @@ export default function HostTorrents() {
 
           <AddTorrent daemon={daemon} busy={busy} onAdd={add} onFail={setFailure} />
 
-          {daemon.trouble && (
+          {daemon.trouble && !stale && (
             <Banner tone="bad">
               Deluge is set up here but would not answer: {daemon.trouble}. Its journal is on the{' '}
               <Link to={`/hosts/${hostId}/service?name=${encodeURIComponent(daemon.unit)}`}>
@@ -163,6 +207,8 @@ export default function HostTorrents() {
 
           <Torrents
             daemon={daemon}
+            torrents={torrents}
+            stale={stale}
             busy={busy}
             onPause={(t) => act('pause', () => api.torrentAction(hostId, 'pause', t.id))}
             onResume={(t) => act('resume', () => api.torrentAction(hostId, 'resume', t.id))}
@@ -214,6 +260,13 @@ export default function HostTorrents() {
           </Card>
 
           <SectionTitle>Settings</SectionTitle>
+          <SeedingRule
+            seeding={daemon.seeding}
+            busy={busy}
+            onSave={(ratio, removeIt) =>
+              act('seeding', () => api.torrentSeeding(hostId, ratio, removeIt))
+            }
+          />
           <Card>
             <FolderField folder={folder} onFolder={setFolder} />
             <p className="sub" style={{ marginTop: 0 }}>
@@ -288,6 +341,24 @@ export default function HostTorrents() {
       )}
     </Page>
   )
+}
+
+/**
+ * Whether the page is the one being looked at.
+ *
+ * A phone locked, or on another app, should not be asking a Raspberry Pi
+ * anything — and a phone coming back should not have to be told to refresh.
+ * Both fall out of stopping the timer when the page is hidden, because
+ * starting it again asks straight away.
+ */
+function useVisible(): boolean {
+  const [visible, setVisible] = useState(!document.hidden)
+  useEffect(() => {
+    const onChange = () => setVisible(!document.hidden)
+    document.addEventListener('visibilitychange', onChange)
+    return () => document.removeEventListener('visibilitychange', onChange)
+  }, [])
+  return visible
 }
 
 /** Deluge is the one thing on this screen Deployer will not install, so this is
@@ -474,18 +545,24 @@ function AddTorrent({
  *  the widest thing on the card and everything else is a line under it. */
 function Torrents({
   daemon,
+  torrents,
+  stale,
   busy,
   onPause,
   onResume,
   onRemove,
 }: {
   daemon: TorrentDaemon
+  /** What deluge last said, which is not always what it said this time. */
+  torrents: Torrent[]
+  /** True where this is the last answer rather than a fresh one. */
+  stale: boolean
   busy: string | null
   onPause: (torrent: Torrent) => void
   onResume: (torrent: Torrent) => void
   onRemove: (torrent: Torrent) => void
 }) {
-  if (daemon.torrents.length === 0) {
+  if (torrents.length === 0) {
     return (
       <Card>
         <div className="sub">
@@ -499,9 +576,16 @@ function Torrents({
   return (
     <>
       <SectionTitle>
-        {daemon.torrents.length} {daemon.torrents.length === 1 ? 'torrent' : 'torrents'}
+        {torrents.length} {torrents.length === 1 ? 'torrent' : 'torrents'}
       </SectionTitle>
-      {daemon.torrents.map((torrent) => (
+      {stale && (
+        <Banner tone="warn">
+          {daemon.running
+            ? 'Deluge did not answer just now — this is what it last said.'
+            : 'The downloader is stopped. This is what it was working on.'}
+        </Banner>
+      )}
+      {torrents.map((torrent) => (
         <TorrentCard
           key={torrent.id}
           torrent={torrent}
@@ -582,6 +666,82 @@ function TorrentCard({
           Remove
         </button>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * What becomes of a torrent once it has finished downloading.
+ *
+ * Left alone deluge seeds for ever, which is the polite thing to do and is also
+ * how a list nobody is watching fills up with things that finished last month.
+ * A ratio is what a torrent has to upload against what it downloaded, and it is
+ * the honest way to say "seed it for a while": a slow torrent gets longer than
+ * a fast one, which is the same fairness a stopwatch would get wrong.
+ *
+ * It is deluge's own setting rather than a rule Deployer enforces, so it holds
+ * when nobody is looking at this screen — which is when torrents finish.
+ */
+function SeedingRule({
+  seeding,
+  busy,
+  onSave,
+}: {
+  seeding: TorrentSeeding
+  busy: string | null
+  onSave: (ratio: number, remove: boolean) => void
+}) {
+  const [ratio, setRatio] = useState(seeding.ratio)
+  const [removeIt, setRemoveIt] = useState(seeding.remove)
+
+  // The controls follow the host rather than every render, so a rule being
+  // chosen is not snatched back by the next poll.
+  useEffect(() => {
+    setRatio(seeding.ratio)
+    setRemoveIt(seeding.remove)
+  }, [seeding.ratio, seeding.remove])
+
+  const changed = ratio !== seeding.ratio || removeIt !== seeding.remove
+  return (
+    <Card>
+      <Field
+        label="When a torrent has finished"
+        help="A ratio is what it uploads against what it downloaded — 2.0 is twice over."
+      >
+        <div className="chips">
+          {RATIOS.map((option) => (
+            <button
+              key={option}
+              className={`chip ${option === ratio ? 'on' : ''}`}
+              onClick={() => {
+                setRatio(option)
+                if (option === 0) setRemoveIt(false)
+              }}
+            >
+              {option === 0 ? 'Keep seeding' : `At ${option.toFixed(1)}`}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={removeIt}
+          disabled={ratio === 0}
+          onChange={(e) => setRemoveIt(e.target.checked)}
+        />
+        Take the entry out of the list too
+      </label>
+      <p className="sub">
+        {ratio === 0
+          ? 'It seeds until you stop it, and stays in the list.'
+          : removeIt
+            ? `At ${ratio.toFixed(1)} deluge stops seeding and drops the torrent from the list. The downloaded files stay on the host — it removes the entry, never the download.`
+            : `At ${ratio.toFixed(1)} deluge stops seeding and leaves the torrent in the list, paused.`}
+      </p>
+      <button className="secondary block" onClick={() => onSave(ratio, removeIt)} disabled={!!busy || !changed}>
+        {busy === 'seeding' ? 'Telling deluge…' : changed ? 'Save the rule' : 'Saved'}
+      </button>
     </Card>
   )
 }
