@@ -409,6 +409,10 @@ export interface RemoteSession {
   password?: string
   /** The page the session opens with. */
   homepage?: string
+  /** The browsers this host has only as snaps, which are no use in a session:
+   *  confinement walls them out of the profile directory. Naming them is what
+   *  tells "no browser" apart from "one that looks installed and cannot run". */
+  snapBrowser?: string
   /** True where the browser here runs without its own sandbox, because this
    *  host would not give it one. A weaker browser than the phone's, and worth
    *  saying so on the screen rather than only in the journal. */

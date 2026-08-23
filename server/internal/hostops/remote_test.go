@@ -216,6 +216,9 @@ func TestInstallScriptStoresAPasswordAndReportsSuccess(t *testing.T) {
 		// -storepasswd writes the obfuscated file x11vnc authenticates against.
 		"x11vnc": `[ "$1" = -storepasswd ] && printf 'stored\n' > "$3"; exit 0`,
 		"chown":  `exit 0`,
+		// A browser that is already a package: the installer has nothing to
+		// fetch, which is what keeps this test off the network.
+		"chromium": `exit 0`,
 	})
 
 	out, code := runScript(t, installScriptFor(root, "pi", ""), "", bin)
@@ -791,5 +794,136 @@ func TestStatusReportsABrowserWithoutItsSandbox(t *testing.T) {
 	}
 	if session := parseRemoteStatus("@@state\nok\n@@degraded\n", "pi"); session.NoSandbox {
 		t.Error("an ordinary session should not claim to be degraded")
+	}
+}
+
+// Ubuntu ships chromium and firefox as snaps, and a snap cannot run in a
+// session like this: confinement walls it out of the profile directory, and a
+// system service has no runtime directory for snapd to work in. It fails on the
+// spot with nothing on stdout, so the session has to recognise it rather than
+// run it and wonder.
+func TestSessionScriptWillNotRunASnapBrowser(t *testing.T) {
+	const display = "92"
+	socket := "/tmp/.X11-unix/X" + display
+	if err := os.MkdirAll("/tmp/.X11-unix", 0o1777); err != nil {
+		t.Skipf("no /tmp/.X11-unix to fake an X server in: %v", err)
+	}
+	if f, err := os.Create(socket); err != nil {
+		t.Skipf("cannot write %s: %v", socket, err)
+	} else {
+		f.Close()
+	}
+	t.Cleanup(func() { os.Remove(socket) })
+
+	root := t.TempDir()
+	conf := filepath.Join(root, "conf")
+	if err := os.MkdirAll(conf, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	bin := stubBin(t, map[string]string{
+		"id":         `[ "$1" = -u ] && { echo 1000; exit 0; }; echo pi`,
+		"Xvfb":       `sleep 10`,
+		"x11vnc":     `sleep 10`,
+		"websockify": `sleep 10`,
+	})
+	// What Ubuntu leaves on the PATH: a name that resolves into /snap.
+	snapDir := filepath.Join(root, "snap", "bin")
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapDir, "chromium"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(snapDir, "chromium"), filepath.Join(bin, "chromium")); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join(root, "session.sh")
+	if err := os.WriteFile(script, []byte(fmt.Sprintf(remoteSessionScript, strings.Join(remoteBrowsers, " "))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := exec.Command("timeout", "8", "sh", script, "1280x800", display, "5999", "6080",
+		conf, filepath.Join(root, "profile"), filepath.Join(root, "Downloads"))
+	run.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	out, err := run.CombinedOutput()
+	log := string(out)
+
+	if !strings.Contains(log, "the only browser here is a snap") {
+		t.Errorf("a snap browser should be named as the problem:\n%s", log)
+	}
+	// Refusing is only half of it: the next step has to be on the screen too.
+	if !strings.Contains(log, "set the session up again") {
+		t.Errorf("the session should say what fixes it:\n%s", log)
+	}
+	// It must not try to run it and sit there in a retry loop.
+	if strings.Contains(log, "exited after") {
+		t.Errorf("the snap was launched anyway:\n%s", log)
+	}
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 4 {
+		t.Errorf("session exited %v, want 4 so a snap is told apart from no browser at all", err)
+	}
+}
+
+// The screen has to tell "no browser" apart from "a browser that looks
+// installed and cannot run", because they are fixed by different things.
+func TestStatusNamesASnapOnlyBrowser(t *testing.T) {
+	session := parseRemoteStatus("@@state\nok\n@@have\nXvfb\nx11vnc\nwebsockify\n@@snap\nchromium firefox\n", "pi")
+	if session.SnapBrowser != "chromium firefox" {
+		t.Errorf("snap browsers came back as %q", session.SnapBrowser)
+	}
+	if session.Browser != "" {
+		t.Errorf("a snap is not a browser this can use, got %q", session.Browser)
+	}
+	if !contains(session.Missing, "a browser") {
+		t.Errorf("missing is %v, want a browser still wanted", session.Missing)
+	}
+}
+
+// A host whose only browser is a snap gets one that is a package. This is the
+// installer half of that: what apt offers is unusable, so Chrome's own .deb is
+// fetched, and the log says which of the two reasons it was.
+func TestInstallScriptFetchesAPackageBrowserWhereOnlySnapsExist(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, remoteConfDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	// What Ubuntu leaves behind: a chromium that resolves into /snap.
+	snapDir := filepath.Join(root, "snap", "bin")
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		filepath.Join(snapDir, "chromium"): "#!/bin/sh\nexit 1\n",
+		filepath.Join(bin, "dpkg"):         "#!/bin/sh\necho amd64\n",
+		filepath.Join(bin, "chown"):        "#!/bin/sh\nexit 0\n",
+		filepath.Join(bin, "x11vnc"):       "#!/bin/sh\n[ \"$1\" = -storepasswd ] && printf 'stored\\n' > \"$3\"; exit 0\n",
+		// curl writes the file it was asked for; installing that .deb is what
+		// puts a real browser on the PATH.
+		filepath.Join(bin, "curl"): "#!/bin/sh\n: > \"$3\"\n",
+		filepath.Join(bin, "apt-get"): "#!/bin/sh\ncase \"$*\" in *.deb*|*/tmp/deployer-chrome*) " +
+			"printf '#!/bin/sh\\nexit 0\\n' > " + filepath.Join(bin, "google-chrome") +
+			"; chmod +x " + filepath.Join(bin, "google-chrome") + ";; esac\nexit 0\n",
+	} {
+		if err := os.WriteFile(name, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(snapDir, "chromium"), filepath.Join(bin, "chromium")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code := runScript(t, installScriptFor(root, "pi", ""), "", bin)
+	if code != 0 {
+		t.Fatalf("install exited %d: %s", code, out)
+	}
+	if !strings.Contains(out, "the browsers here are snaps") {
+		t.Errorf("the log should say why it went and got one:\n%s", out)
+	}
+	if !strings.Contains(out, "the session will run google-chrome") {
+		t.Errorf("the installer should end naming a browser that is a package:\n%s", out)
+	}
+	if got := strings.TrimSpace(read(t, filepath.Join(root, remoteConfDir, "setup.state"))); got != "ok" {
+		t.Errorf("state is %q, want ok", got)
 	}
 }

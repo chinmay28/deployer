@@ -115,6 +115,10 @@ type RemoteSession struct {
 	Password string `json:"password,omitempty"`
 	// Homepage is the page the session opens when it starts.
 	Homepage string `json:"homepage,omitempty"`
+	// SnapBrowser names the browsers this host has only as snaps, which are no
+	// use here. It is the difference between "no browser" and "a browser that
+	// looks installed and cannot run", which are fixed by different things.
+	SnapBrowser string `json:"snapBrowser,omitempty"`
 	// NoSandbox reports a browser running here without its own sandbox, because
 	// this host would not give it one. It is a weaker browser than the one on
 	// the phone, and whoever signs into something with it should be told.
@@ -194,9 +198,18 @@ printf '@@degraded\n'
 cat "$etc/degraded" 2>/dev/null
 
 printf '@@have\n'
+snap=""
 for b in %s; do
-  command -v "$b" >/dev/null 2>&1 && printf '%%s\n' "$b"
+  p=$(command -v "$b" 2>/dev/null) || continue
+  [ -n "$p" ] || continue
+  real=$(readlink -f "$p" 2>/dev/null) || real="$p"
+  case "$p$real" in
+    */snap/*) snap="${snap:+$snap }$b"; continue ;;
+  esac
+  printf '%%s\n' "$b"
 done
+
+printf '@@snap\n%%s\n' "$snap"
 
 printf '@@unit\n'
 if command -v systemctl >/dev/null 2>&1; then
@@ -306,6 +319,7 @@ func parseRemoteStatus(out, user string) *RemoteSession {
 	session.Password = first(found["password"])
 	session.Homepage = first(found["homepage"])
 	session.NoSandbox = first(found["degraded"]) == "no-sandbox"
+	session.SnapBrowser = first(found["snap"])
 
 	have := map[string]bool{}
 	for _, line := range found["have"] {
@@ -504,20 +518,80 @@ printf '== updating the package list\n'
 apt-get update || exit 10
 
 printf '== installing the virtual screen, the VNC server and noVNC\n'
-apt-get install -y xvfb x11vnc novnc websockify || exit 11
+apt-get install -y xvfb x11vnc novnc websockify curl || exit 11
 
 printf '== installing a window manager\n'
 apt-get install -y openbox || printf 'openbox is not available here; dialogs will be unmanaged\n'
 
 printf '== looking for a browser\n'
-browser=""
-for b in %[2]s; do
-  if command -v "$b" >/dev/null 2>&1; then browser="$b"; break; fi
-done
+# A browser that is really a snap is not a browser Deployer can use. Ubuntu
+# ships chromium and firefox that way, and snap confinement is what makes them
+# unusable in a session like this: the browser is walled out of a hidden profile
+# directory in the home it is otherwise allowed into, and a system service has
+# no user runtime directory for snapd to work in. It fails on the spot with
+# nothing on stdout, which is the least helpful way anything can fail.
+package_browser() {
+  for b in %[2]s; do
+    p=$(command -v "$b" 2>/dev/null) || continue
+    [ -n "$p" ] || continue
+    real=$(readlink -f "$p" 2>/dev/null) || real="$p"
+    case "$p$real" in
+      */snap/*) continue ;;
+    esac
+    printf '%%s\n' "$b"
+    return 0
+  done
+  return 1
+}
+
+browser=$(package_browser) || browser=""
 if [ -z "$browser" ]; then
   printf '== installing a browser\n'
-  apt-get install -y chromium || apt-get install -y chromium-browser || apt-get install -y firefox-esr || exit 12
+  apt-get install -y chromium || apt-get install -y chromium-browser || apt-get install -y firefox-esr || true
+  browser=$(package_browser) || browser=""
 fi
+
+snap_browsers() {
+  found=""
+  for b in %[2]s; do
+    p=$(command -v "$b" 2>/dev/null) || continue
+    [ -n "$p" ] || continue
+    real=$(readlink -f "$p" 2>/dev/null) || real="$p"
+    case "$p$real" in
+      */snap/*) found="${found:+$found }$b" ;;
+    esac
+  done
+  printf '%%s\n' "$found"
+}
+
+if [ -z "$browser" ]; then
+  # Nothing usable came out of apt. Google publishes Chrome as an ordinary
+  # package, and taking the .deb directly is the shortest way to a browser that
+  # runs — it adds Google's repository itself, so it keeps updating like
+  # anything else installed here.
+  snaps=$(snap_browsers)
+  arch=$(dpkg --print-architecture 2>/dev/null || echo unknown)
+  if [ "$arch" != amd64 ]; then
+    printf 'this host offers no browser that is a package%%s, and Chrome has no package build for %%s\n' \
+      "${snaps:+ (only the snaps: $snaps)}" "$arch" >&2
+    exit 15
+  fi
+  if [ -n "$snaps" ]; then
+    printf '== the browsers here are snaps (%%s), which cannot run in a session; fetching Chrome as a package instead\n' "$snaps"
+  else
+    printf '== apt installed no browser; fetching Chrome as a package instead\n'
+  fi
+  deb=$(mktemp /tmp/deployer-chrome.XXXXXX) || exit 16
+  if ! curl -fsSL -o "$deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+    rm -f "$deb"
+    printf 'could not download Chrome\n' >&2
+    exit 16
+  fi
+  apt-get install -y "$deb" || { rm -f "$deb"; exit 17; }
+  rm -f "$deb"
+  browser=$(package_browser) || { printf 'Chrome installed but is not on the PATH\n' >&2; exit 18; }
+fi
+printf '== the session will run %%s\n' "$browser"
 
 if [ "$reset" = 1 ] || [ ! -s "$etc/vncpasswd" ]; then
   printf '== storing a VNC password\n'
@@ -608,11 +682,33 @@ else
   websockify "$web" "localhost:$vnc" &
 fi
 
+# A browser that is really a snap is not a browser Deployer can use. Ubuntu
+# ships chromium and firefox that way, and snap confinement is what makes them
+# unusable in a session like this: the browser is walled out of a hidden profile
+# directory in the home it is otherwise allowed into, and a system service has
+# no user runtime directory for snapd to work in. It fails on the spot with
+# nothing on stdout, which is the least helpful way anything can fail.
 browser=""
+snap=""
 for b in %s; do
-  if command -v "$b" >/dev/null 2>&1; then browser="$b"; break; fi
+  p=$(command -v "$b" 2>/dev/null) || continue
+  [ -n "$p" ] || continue
+  real=$(readlink -f "$p" 2>/dev/null) || real="$p"
+  case "$p$real" in
+    */snap/*) snap="${snap:+$snap }$b"; continue ;;
+  esac
+  browser="$b"
+  break
 done
-[ -n "$browser" ] || { printf 'deployer-remote: no browser installed\n'; exit 3; }
+if [ -z "$browser" ]; then
+  if [ -n "$snap" ]; then
+    printf 'deployer-remote: the only browser here is a snap (%%s), which cannot run in this session\n' "$snap"
+    printf 'deployer-remote: set the session up again — Deployer will fetch one that is a package\n'
+    exit 4
+  fi
+  printf 'deployer-remote: no browser installed\n'
+  exit 3
+fi
 
 # Which browser, and what it really is. A distribution that ships its browser as
 # a snap wrapper leaves a binary that is on the PATH and cannot run, and the
