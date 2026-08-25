@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
 import { Sender, ShellStream, type ConnectionState } from '../lib/shell'
 import type { ShellSession } from '../types'
+import { Sheet } from './ui'
 
 /**
  * A terminal on a phone.
@@ -23,6 +24,13 @@ import type { ShellSession } from '../types'
  * to the visual viewport rather than the window, and the host is told the new
  * window each time — which is what makes a full-screen program redraw into the
  * space that is actually visible instead of behind the keyboard.
+ *
+ * Copy and paste. Both are keys on the bar, because neither is a gesture a
+ * phone offers over a terminal: xterm selects with a mouse and a phone has
+ * none, so Copy arms a mode in which a drag picks lines instead of scrolling.
+ * And because Deployer is usually plain http on a LAN, where a browser hands a
+ * script no clipboard at all, both fall back to a box of text the phone's own
+ * Copy and Paste can reach.
  */
 
 /** Colours xterm needs as concrete values; it cannot read a CSS variable. Kept
@@ -82,6 +90,10 @@ const SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18]
 const SIZE_KEY = 'deployer.terminal.fontSize'
 const EXTRAS_KEY = 'deployer.terminal.extraKeys'
 
+/** How close to the top or bottom edge a finger has to get, while picking
+ *  text, before the screen starts scrolling under it. */
+const EDGE = 28
+
 /** The keys a phone keyboard does not have, in the order a shell needs them. */
 const KEYS: { label: string; bytes: number[]; title: string }[] = [
   { label: 'Esc', bytes: [0x1b], title: 'Escape' },
@@ -136,6 +148,29 @@ export default function TerminalView({
   /** What the terminal actually measured. Shown beside the size buttons,
    *  because "how many columns is this" is the only thing they are for. */
   const [cols, setCols] = useState(session.cols)
+  /** Whether a drag over the screen picks lines rather than scrolling. A ref
+   *  as well, for the same reason as the modifiers: the touch handlers read it
+   *  from outside React. */
+  const selectingRef = useRef(false)
+  const [selecting, setSelecting] = useState(false)
+  /** Whether there is anything to copy — what turns the Copy key from arming
+   *  the mode into doing the thing. */
+  const [picked, setPicked] = useState(false)
+  /** A line between the screen and the keys: what the armed mode wants, or
+   *  what just happened. */
+  const [note, setNote] = useState<string | null>(null)
+  const noteTimer = useRef(0)
+  /** The way out when the browser will not give a script the clipboard: a box
+   *  of text the phone's own Copy and Paste can reach. */
+  const [sheet, setSheet] = useState<{ mode: 'copy' | 'paste'; text: string } | null>(null)
+
+  const say = useCallback((message: string | null, hold = 0) => {
+    window.clearTimeout(noteTimer.current)
+    setNote(message)
+    // Held messages are the ones about something that has already happened, so
+    // they go away by themselves; a mode's own line stays while the mode does.
+    if (message && hold) noteTimer.current = window.setTimeout(() => setNote(null), hold)
+  }, [])
 
   const arm = useCallback((key: 'ctrl' | 'alt', on: boolean) => {
     modsRef.current = { ...modsRef.current, [key]: on }
@@ -183,22 +218,35 @@ export default function TerminalView({
     const typed = term.onData((data) => {
       const { ctrl, alt } = modsRef.current
       let bytes = Array.from(new TextEncoder().encode(data))
-      if (ctrl && data.length === 1) {
-        const code = controlCode(data)
-        if (code !== null) bytes = [code]
-      }
-      if (alt) bytes = [0x1b, ...bytes]
-      if (ctrl || alt) {
-        modsRef.current = { ctrl: false, alt: false }
-        setMods({ ctrl: false, alt: false })
+      // A key is one character, or the escape sequence a bluetooth arrow sends.
+      // Everything else arrives here whole — a paste, dictation, a word an IME
+      // has just committed — and an armed modifier has no business being
+      // applied to a block of text, least of all to the brackets around a
+      // paste.
+      const key = data.length === 1 || (data.startsWith('\x1b') && !data.startsWith('\x1b[200~'))
+      if (key) {
+        if (ctrl && data.length === 1) {
+          const code = controlCode(data)
+          if (code !== null) bytes = [code]
+        }
+        if (alt) bytes = [0x1b, ...bytes]
+        if (ctrl || alt) {
+          modsRef.current = { ctrl: false, alt: false }
+          setMods({ ctrl: false, alt: false })
+        }
       }
       sender.send(bytes)
     })
-    // A pasted or dictated block arrives whole, and modifiers have no business
-    // being applied to it.
-    const pasted = term.onBinary((data) => {
+    // Bytes rather than text: mouse reports and the like, which a program that
+    // asked for them expects back exactly as they were.
+    const binary = term.onBinary((data) => {
       sender.send(Array.from(data, (ch) => ch.charCodeAt(0) & 0xff))
     })
+
+    // Whether there is anything to copy is xterm's to know: a drag here, a
+    // mouse on a desktop, or a selection dropped by what the shell printed
+    // next all arrive the same way.
+    const chosen = term.onSelectionChange(() => setPicked(term.hasSelection()))
 
     const onTheme = (e: MediaQueryListEvent) => {
       term.options.theme = e.matches ? THEMES.dark : THEMES.light
@@ -279,10 +327,12 @@ export default function TerminalView({
       dark.removeEventListener('change', onTheme)
       window.clearTimeout(fitTimer)
       window.clearTimeout(sizeTimer)
+      window.clearTimeout(noteTimer.current)
       observer.disconnect()
       resized.dispose()
+      chosen.dispose()
       typed.dispose()
-      pasted.dispose()
+      binary.dispose()
       stream.stop()
       term.dispose()
       termRef.current = null
@@ -293,6 +343,108 @@ export default function TerminalView({
     // refs by the closures above rather than rebuilding the terminal.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id])
+
+  /**
+   * Picking text with a finger.
+   *
+   * xterm selects with a mouse, and a phone has none: a drag over the screen
+   * means scroll, and nothing a finger does says "select this". So picking is
+   * a mode, armed from the Copy key, and while it is armed the touches belong
+   * here rather than to xterm — taken in the capture phase, before xterm's own
+   * handlers see them, which is the same thing that stops the screen scrolling
+   * out from under the finger.
+   *
+   * A line at a time, because that is the precision a finger has and because a
+   * command and what it printed are lines anyway.
+   */
+  useEffect(() => {
+    selectingRef.current = selecting
+    const term = termRef.current
+    const stage = stageRef.current
+    if (!selecting || !term || !stage) return
+
+    stage.classList.add('selecting')
+
+    /** The buffer line under a point on the screen. Absolute, counting the
+     *  scrollback, so it stays the same line while the view scrolls. */
+    const lineAt = (clientY: number): number => {
+      const screen = stage.querySelector('.xterm-screen') ?? stage
+      const box = screen.getBoundingClientRect()
+      const row = Math.floor((clientY - box.top) / (box.height / term.rows))
+      return term.buffer.active.viewportY + Math.min(term.rows - 1, Math.max(0, row))
+    }
+
+    /** Where the drag started, in buffer lines, and where the finger is, in
+     *  pixels — the second is what the edge scroll re-reads as the view moves
+     *  under a finger that is holding still. */
+    let anchor = 0
+    let at = 0
+    let edge = 0
+    let edgeTimer = 0
+
+    // Which lines are picked is xterm's business; that something is picked
+    // reaches the Copy key through the subscription above.
+    const extend = (line: number) => {
+      term.selectLines(Math.min(anchor, line), Math.max(anchor, line))
+    }
+
+    /** Dragging to the top or bottom edge keeps going, because what is worth
+     *  copying is usually taller than a phone. */
+    const follow = (clientY: number) => {
+      const box = stage.getBoundingClientRect()
+      const dir = clientY < box.top + EDGE ? -1 : clientY > box.bottom - EDGE ? 1 : 0
+      if (dir === edge) return
+      edge = dir
+      window.clearInterval(edgeTimer)
+      if (dir === 0) return
+      edgeTimer = window.setInterval(() => {
+        term.scrollLines(dir)
+        extend(lineAt(at))
+      }, 90)
+    }
+
+    const begin = (e: TouchEvent) => {
+      const touch = e.touches[0]
+      if (!touch) return
+      e.stopPropagation()
+      e.preventDefault()
+      at = touch.clientY
+      anchor = lineAt(at)
+      extend(anchor)
+      say('Drag to take more lines, then tap Copy')
+    }
+    const drag = (e: TouchEvent) => {
+      const touch = e.touches[0]
+      if (!touch) return
+      e.stopPropagation()
+      e.preventDefault()
+      at = touch.clientY
+      extend(lineAt(at))
+      follow(at)
+    }
+    const release = (e: TouchEvent) => {
+      e.stopPropagation()
+      edge = 0
+      window.clearInterval(edgeTimer)
+    }
+
+    // Capture, so xterm never sees them: its own touch handling is the scroll
+    // this mode exists to replace, and it cannot be turned off.
+    const how = { capture: true, passive: false } as const
+    stage.addEventListener('touchstart', begin, how)
+    stage.addEventListener('touchmove', drag, how)
+    stage.addEventListener('touchend', release, how)
+    stage.addEventListener('touchcancel', release, how)
+
+    return () => {
+      window.clearInterval(edgeTimer)
+      stage.classList.remove('selecting')
+      stage.removeEventListener('touchstart', begin, how)
+      stage.removeEventListener('touchmove', drag, how)
+      stage.removeEventListener('touchend', release, how)
+      stage.removeEventListener('touchcancel', release, how)
+    }
+  }, [selecting, say])
 
   // The soft keyboard covers the bottom half of the screen. Sizing to the
   // visual viewport is what keeps the prompt above it instead of behind it.
@@ -339,19 +491,80 @@ export default function TerminalView({
     setFontSize(next)
   }
 
+  /** Text arriving whole, from the clipboard or from the box below. */
+  const insert = (text: string) => {
+    const term = termRef.current
+    if (!term) return
+    // Modifiers are for keys. A block of text is not a keystroke.
+    modsRef.current = { ctrl: false, alt: false }
+    setMods({ ctrl: false, alt: false })
+    // xterm's own paste rather than the raw bytes: it turns newlines into
+    // carriage returns, and wraps the block in the brackets a shell asks for
+    // when it wants to know a paste is a paste — which is what stops a pasted
+    // script running itself a line at a time before it has all arrived.
+    term.paste(text)
+    term.focus()
+  }
+
   const paste = async () => {
     try {
-      const text = await navigator.clipboard.readText()
-      if (text) senderRef.current?.type(text)
+      // Optional because over plain http there is no clipboard object at all,
+      // and Deployer is usually plain http on a LAN.
+      const text = await navigator.clipboard?.readText()
+      if (text) {
+        insert(text)
+        return
+      }
+      if (text === '') {
+        say('The clipboard is empty', 1600)
+        return
+      }
     } catch {
-      onError('The clipboard is not readable here — it needs https or localhost.')
+      // Refused, or asked for from a page the browser does not trust with it.
     }
-    termRef.current?.focus()
+    setSheet({ mode: 'paste', text: '' })
+  }
+
+  /** Out of the mode with nothing copied — the screen goes back to scrolling
+   *  and typing, which is what it is for the rest of the time. */
+  const stopPicking = () => {
+    termRef.current?.clearSelection()
+    setSelecting(false)
+    say(null)
+  }
+
+  /** Copy is two things, because the first has to happen before the second can:
+   *  with nothing picked it arms the mode that picks, and with something picked
+   *  it copies that and puts the mode away. */
+  const copy = async () => {
+    const term = termRef.current
+    if (!term) return
+    if (!term.hasSelection()) {
+      const on = !selectingRef.current
+      setSelecting(on)
+      say(on ? 'Drag over the screen to pick lines, then tap Copy' : null)
+      return
+    }
+    const text = term.getSelection()
+    term.clearSelection()
+    setSelecting(false)
+    if (await toClipboard(text)) {
+      say(`Copied ${count(text)}`, 1600)
+      term.focus()
+      return
+    }
+    setSheet({ mode: 'copy', text })
   }
 
   return (
     <>
-      <div className="term-stage" ref={stageRef} onClick={() => termRef.current?.focus()} />
+      {/* Focusing raises the keyboard, which is the last thing wanted while
+          text is being picked out from under it. */}
+      <div
+        className="term-stage"
+        ref={stageRef}
+        onClick={() => !selectingRef.current && termRef.current?.focus()}
+      />
 
       {state !== 'live' && (
         <div className={`term-state ${state}`} role="status">
@@ -362,6 +575,21 @@ export default function TerminalView({
       )}
 
       <div className="term-keys">
+        {/* Over the foot of the screen rather than above it: a line that took
+            room would resize the terminal, and a terminal that reflows every
+            time a mode is armed is a terminal that moved what was being read.
+            The way out of the mode lives here too, because a key that comes
+            and goes would move the ones beside it. */}
+        {(note || selecting) && (
+          <div className="term-note">
+            <span>{note}</span>
+            {selecting && (
+              <button type="button" className="term-drop" onClick={stopPicking}>
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
         <div className="term-row">
           {KEYS.map((key) => (
             <KeyButton key={key.label} title={key.title} onPress={() => send(key.bytes)}>
@@ -374,6 +602,16 @@ export default function TerminalView({
             onPress={() => arm('ctrl', !modsRef.current.ctrl)}
           >
             Ctrl
+          </KeyButton>
+          <KeyButton
+            title={picked ? 'Copy what is picked' : 'Pick lines to copy'}
+            held={selecting || picked}
+            onPress={copy}
+          >
+            Copy
+          </KeyButton>
+          <KeyButton title="Paste into the shell" onPress={paste}>
+            Paste
           </KeyButton>
           <KeyButton title="More keys" held={extras} onPress={() => showExtras(!extras)}>
             •••
@@ -401,9 +639,6 @@ export default function TerminalView({
             >
               Alt
             </KeyButton>
-            <KeyButton title="Paste from the clipboard" onPress={paste}>
-              Paste
-            </KeyButton>
             {EXTRAS.map((key) => (
               <KeyButton key={key.label} title={key.title} onPress={() => send(key.bytes)}>
                 {key.label}
@@ -412,7 +647,85 @@ export default function TerminalView({
           </div>
         )}
       </div>
+
+      {sheet && (
+        <ClipboardSheet
+          mode={sheet.mode}
+          text={sheet.text}
+          onSend={(text) => {
+            setSheet(null)
+            if (text) insert(text)
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * The clipboard the long way round.
+ *
+ * A browser hands a script the clipboard only on a page it trusts, which means
+ * https or localhost — and Deployer is usually plain http on the LAN, where
+ * there is no clipboard object at all. But the phone's own Copy and Paste have
+ * never needed one: they work on a box of text. So this is that box, filled in
+ * to be copied out of, or empty to be pasted into and sent.
+ */
+function ClipboardSheet({
+  mode,
+  text,
+  onSend,
+  onClose,
+}: {
+  mode: 'copy' | 'paste'
+  text: string
+  onSend: (text: string) => void
+  onClose: () => void
+}) {
+  const boxRef = useRef<HTMLTextAreaElement>(null)
+  const [typed, setTyped] = useState(text)
+
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box) return
+    box.focus()
+    // Already selected, so copying it is one long-press rather than a
+    // long-press and two handles dragged along a wall of output.
+    if (mode === 'copy') box.setSelectionRange(0, box.value.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <Sheet
+      title={mode === 'copy' ? 'Copy this' : 'Paste into the shell'}
+      subtitle={
+        mode === 'copy'
+          ? 'This page is not one the browser trusts with the clipboard, so it goes through here: long-press the text and choose Copy.'
+          : 'Long-press the box and choose Paste, then send it — the shell sees it as one paste rather than as typing.'
+      }
+      onClose={onClose}
+    >
+      <textarea
+        ref={boxRef}
+        className="term-clip"
+        value={typed}
+        readOnly={mode === 'copy'}
+        rows={mode === 'copy' ? 8 : 4}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        onChange={(e) => setTyped(e.target.value)}
+      />
+      {mode === 'paste' && (
+        <button className="block" disabled={!typed} onClick={() => onSend(typed)}>
+          Send it to the shell
+        </button>
+      )}
+      <button className="secondary block" onClick={onClose}>
+        {mode === 'copy' ? 'Done' : 'Cancel'}
+      </button>
+    </Sheet>
   )
 }
 
@@ -466,6 +779,52 @@ function controlCode(ch: string): number | null {
     '?': 127,
   }
   return c in others ? others[c] : null
+}
+
+/**
+ * Text to the clipboard, by whichever of the two ways is open.
+ *
+ * The modern one needs a page the browser trusts — https or localhost — and
+ * Deployer is usually neither. The old one is a hidden box, a selection and a
+ * command, and it still works on a plain http page because a tap on Copy is a
+ * gesture the browser watched happen. Returns false when neither did, which is
+ * where the box the user can see comes in.
+ */
+async function toClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // Refused. The old way may still be allowed.
+  }
+  const box = document.createElement('textarea')
+  box.value = text
+  // Not readonly and editable: iOS refuses to select the contents of a field
+  // it thinks cannot be edited, and a selection is what there is to copy.
+  box.contentEditable = 'true'
+  box.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0'
+  document.body.appendChild(box)
+  try {
+    const range = document.createRange()
+    range.selectNodeContents(box)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    box.setSelectionRange(0, text.length)
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    box.remove()
+  }
+}
+
+/** How much was copied, said the way a person would. */
+function count(text: string): string {
+  const lines = text.split('\n').length
+  return lines === 1 ? 'one line' : `${lines} lines`
 }
 
 function readFontSize(): number {

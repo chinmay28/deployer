@@ -569,6 +569,26 @@ the letter. The bar refuses focus rather than taking it, which is the whole
 trick — a key that focused itself would dismiss the keyboard, and a Tab key that
 closes the keyboard is worse than no Tab key.
 
+**Copy and paste are keys on that bar too**, because neither is a gesture a
+phone offers over a terminal: xterm selects with a mouse and a phone has none,
+and a drag over the screen means scroll. So Copy with nothing picked arms a
+mode in which a drag takes lines instead — a line at a time, which is the
+precision a finger has and the shape a command and its output have anyway, and
+held against the top or bottom edge it keeps going, because what is worth
+copying is usually taller than a phone. Copy again takes what is picked, and
+Cancel leaves without it. Paste puts the clipboard in as one paste rather than
+as typing — bracketed, when the shell asked for that — so a pasted script does
+not start running itself a line at a time before all of it has arrived.
+
+Both have a way round, and they need it: a browser hands a script the clipboard
+only on a page it trusts, which means https or localhost, and Deployer is
+usually plain http on a LAN. So copying falls back to the older way — a hidden
+box, a selection, and a command a tap is allowed to run — and, if even that is
+refused, to a box of the text with the phone's own Copy on it. Pasting falls
+back to an empty box to paste into and send. Copy and paste work over plain
+http, which is the whole point of having them here rather than leaving them to
+the browser.
+
 **How many columns fit is the other half of the problem**, so the text size is a
 control rather than a setting, with the column count between the two buttons.
 A phone held upright is about 55 columns at a comfortable size and about 70 at a
