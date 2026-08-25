@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -176,6 +177,49 @@ cpu  10 0 5 100 0 0 0 0 0 0
 func TestParseProbeGarbage(t *testing.T) {
 	if _, err := parseProbe("bash: /proc/stat: Permission denied\n"); err == nil {
 		t.Error("expected an error when no sections are present")
+	}
+}
+
+func TestParseDFPrimaryFirst(t *testing.T) {
+	// A UEFI host lists efivarfs — a few hundred kilobytes of NVRAM — ahead of
+	// the root filesystem, and df keeps the mount table's order. The caller
+	// showing one disk means the root one, so it has to come out first.
+	lines := []string{
+		"Filesystem     1024-blocks     Used Available Capacity Mounted on",
+		"efivarfs               512      271       241      54% /sys/firmware/efi/efivars",
+		"/dev/vda2         41000000 12000000  27000000      31% /",
+		"/dev/vda1           500000   100000    400000      20% /boot",
+		"/dev/vdb1        200000000 10000000 190000000       5% /mnt/data",
+	}
+	disks := parseDF(lines)
+	if len(disks) != 3 {
+		t.Fatalf("disks = %+v, want the 3 real filesystems", disks)
+	}
+	if disks[0].Mount != "/" || disks[0].Device != "/dev/vda2" {
+		t.Errorf("primary disk = %+v, want / on /dev/vda2", disks[0])
+	}
+	// Behind root, the biggest store leads.
+	if disks[1].Mount != "/mnt/data" || disks[2].Mount != "/boot" {
+		t.Errorf("disks after root = %+v, want /mnt/data then /boot", disks[1:])
+	}
+	for _, d := range disks {
+		if strings.HasPrefix(d.Mount, "/sys") {
+			t.Errorf("kernel interface %+v reported as storage", d)
+		}
+	}
+}
+
+func TestParseDFNoRoot(t *testing.T) {
+	// Without a root line the largest real filesystem stands in, rather than
+	// whichever one df happened to print first.
+	lines := []string{
+		"Filesystem     1024-blocks     Used Available Capacity Mounted on",
+		"/dev/sda1           500000   100000    400000      20% /boot",
+		"/dev/sdb1        200000000 10000000 190000000       5% /srv",
+	}
+	disks := parseDF(lines)
+	if len(disks) != 2 || disks[0].Mount != "/srv" {
+		t.Errorf("disks = %+v, want /srv first", disks)
 	}
 }
 

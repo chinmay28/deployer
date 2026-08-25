@@ -5,6 +5,7 @@ package metrics
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -230,6 +231,28 @@ func parseMeminfo(lines []string, s *store.Sample) {
 var pseudoFS = map[string]bool{
 	"tmpfs": true, "devtmpfs": true, "none": true, "overlay": true,
 	"squashfs": true, "udev": true, "run": true,
+	// Kernel interfaces df happily reports a size for. efivarfs is the one
+	// that bites: a few hundred kilobytes of NVRAM that df lists before the
+	// root filesystem on a UEFI host, which is not a disk in any sense.
+	"efivarfs": true, "sysfs": true, "proc": true, "devpts": true,
+	"securityfs": true, "cgroup": true, "cgroup2": true, "pstore": true,
+	"bpf": true, "configfs": true, "debugfs": true, "tracefs": true,
+	"fusectl": true, "hugetlbfs": true, "mqueue": true, "nsfs": true,
+	"ramfs": true, "binfmt_misc": true, "systemd-1": true,
+}
+
+// pseudoMounts are the trees a real disk is never mounted under. Filtering by
+// mount as well as by device catches the same kernel interfaces under a
+// filesystem name df reports differently across distributions.
+var pseudoMounts = []string{"/proc", "/sys", "/dev", "/run"}
+
+func isPseudoMount(mount string) bool {
+	for _, prefix := range pseudoMounts {
+		if mount == prefix || strings.HasPrefix(mount, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseDF(lines []string) []store.Disk {
@@ -246,7 +269,7 @@ func parseDF(lines []string) []store.Disk {
 			continue
 		}
 		mount := strings.Join(f[5:], " ")
-		if seen[mount] {
+		if seen[mount] || isPseudoMount(mount) {
 			continue
 		}
 		total, err1 := strconv.ParseInt(f[1], 10, 64)
@@ -262,7 +285,26 @@ func parseDF(lines []string) []store.Disk {
 			UsedBytes:  used * 1024,
 		})
 	}
+	sortDisks(disks)
 	return disks
+}
+
+// sortDisks puts the host's primary filesystem first, because that is the one
+// a caller showing a single disk means. df's own order is the mount table's,
+// which on some hosts starts somewhere other than the root filesystem. Root
+// wins outright; the rest fall in by size, largest first, so a host without a
+// reported root still leads with its main store.
+func sortDisks(disks []store.Disk) {
+	sort.SliceStable(disks, func(i, j int) bool {
+		a, b := disks[i], disks[j]
+		if (a.Mount == "/") != (b.Mount == "/") {
+			return a.Mount == "/"
+		}
+		if a.TotalBytes != b.TotalBytes {
+			return a.TotalBytes > b.TotalBytes
+		}
+		return a.Mount < b.Mount
+	})
 }
 
 func field(line string, i int) string {

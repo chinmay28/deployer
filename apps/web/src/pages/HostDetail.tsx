@@ -16,6 +16,7 @@ import {
   Sparkline,
   useLoader,
 } from '../components/ui'
+import { realDisks } from '../lib/disk'
 import { ago, bytes, percent, time, uptime } from '../lib/format'
 import type { HostProcess, HostTestResult, Stat } from '../types'
 
@@ -203,7 +204,7 @@ export default function HostDetail() {
               )}
 
               <div className="list-divider" />
-              {sample.disks.map((disk) => (
+              {realDisks(sample.disks).map((disk) => (
                 <div key={disk.mount} style={{ marginBottom: 10 }}>
                   <Meter
                     label={disk.mount}
