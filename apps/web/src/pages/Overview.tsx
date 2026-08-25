@@ -4,6 +4,7 @@ import { LaunchButton } from '../components/launch'
 import { TabPage } from '../components/Layout'
 import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
+import { primaryDisk } from '../lib/disk'
 import { ago, bytes, parts, percent, ports, time } from '../lib/format'
 import type { Host } from '../types'
 
@@ -97,7 +98,7 @@ export default function Overview() {
 
 function HostSummary({ host }: { host: Host }) {
   const sample = host.latest
-  const disk = sample?.disks?.[0]
+  const disk = primaryDisk(sample?.disks)
   return (
     <Link className="card" to={`/hosts/${host.id}`}>
       <div className="row between">
