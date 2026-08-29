@@ -49,6 +49,10 @@ func TestTorrentRequestsAreValidatedBeforeConnecting(t *testing.T) {
 		{"a seeding ratio nobody meant", "POST", "/api/hosts/%d/torrents/action", `{"action":"seeding","ratio":1000}`},
 		{"a negative seeding ratio", "POST", "/api/hosts/%d/torrents/action", `{"action":"seeding","ratio":-2}`},
 		{"removing entries with no ratio to reach", "POST", "/api/hosts/%d/torrents/action", `{"action":"seeding","remove":true}`},
+
+		{"a torrent limit of nothing", "POST", "/api/hosts/%d/torrents/action", `{"action":"limit"}`},
+		{"a torrent limit below any meaning", "POST", "/api/hosts/%d/torrents/action", `{"action":"limit","limit":-2}`},
+		{"a torrent limit nobody meant", "POST", "/api/hosts/%d/torrents/action", `{"action":"limit","limit":100000}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

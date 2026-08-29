@@ -168,6 +168,14 @@ export const api = {
       method: 'POST',
       ...json({ action: 'seeding', ratio, remove }),
     }),
+  /** Tells deluge how many torrents to work on at once — the rest wait as
+   *  Queued until a slot opens. Deluge's own defaults are small, and a queue
+   *  held under them reads as a stuck download. -1 means no limit at all. */
+  torrentLimit: (id: number, limit: number) =>
+    request<TorrentDaemon>(`/api/hosts/${id}/torrents/action`, {
+      method: 'POST',
+      ...json({ action: 'limit', limit }),
+    }),
   /** Writes the daemon onto the host, or rewrites the one already there.
    *  Idempotent: the password and everything already downloading stay, so
    *  changing the folder does not restart a download. */
