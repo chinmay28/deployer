@@ -146,6 +146,11 @@ type TorrentDaemon struct {
 	Asked bool `json:"asked"`
 	// Seeding is what deluge will do with a torrent once it has finished.
 	Seeding TorrentSeeding `json:"seeding"`
+	// ActiveLimit is how many torrents deluge works on at once — the rest wait
+	// as Queued until a slot opens. It is -1 where there is no limit at all,
+	// which is deluge's own way of saying so, and 0 where deluge could not be
+	// asked.
+	ActiveLimit int `json:"activeLimit,omitempty"`
 	// Trouble is what deluge-console said when it could not be asked. It is a
 	// state the screen reports rather than an error the request fails with:
 	// everything else on this page is still true and still worth showing.
@@ -202,16 +207,24 @@ type TorrentSeeding struct {
 	Remove bool `json:"remove"`
 }
 
-// seedingKeys are deluge's own names for that, asked for and set as they are.
-var seedingKeys = []string{"stop_seed_at_ratio", "stop_seed_ratio", "remove_seed_at_ratio"}
+// settingKeys are the daemon settings Deployer reads back, by deluge's own
+// names: the three that make up the seeding rule, and the queue's limit on how
+// many torrents are worked on at once.
+var settingKeys = []string{"stop_seed_at_ratio", "stop_seed_ratio", "remove_seed_at_ratio", "max_active_limit"}
 
-// seedingLine is one of them coming back: "stop_seed_ratio: 2.0".
-var seedingLine = regexp.MustCompile(`^(stop_seed_at_ratio|stop_seed_ratio|remove_seed_at_ratio):\s*(\S+)\s*$`)
+// settingLine is one of them coming back: "stop_seed_ratio: 2.0".
+var settingLine = regexp.MustCompile(`^(stop_seed_at_ratio|stop_seed_ratio|remove_seed_at_ratio|max_active_limit):\s*(\S+)\s*$`)
 
 // MaxSeedRatio is as far as this will go. A ratio is a multiple of what was
 // downloaded, so ten is a great deal of uploading and a hundred is a typing
 // mistake.
 const MaxSeedRatio = 100
+
+// MaxActiveTorrents is as many as Deployer will ask deluge to work on at once.
+// Past a couple of hundred a limit is not limiting anything, so a bigger
+// number is a typing mistake — and "no limit at all" is asked for as -1, which
+// is deluge's own word for it.
+const MaxActiveTorrents = 200
 
 // torrentPieces is what a host needs before any of this works: the daemon, and
 // the client Deployer drives it with. Both come from deluge's own packages, and
@@ -383,7 +396,7 @@ func (s *Service) TorrentStatus(ctx context.Context, h *store.Host) (*TorrentDae
 	}
 	script := fmt.Sprintf(torrentStatusScript,
 		torrentStateDir, consoleScript(), strings.Join(torrentPieces, " "),
-		TorrentUnit, MaxTorrentListBytes, strings.Join(seedingKeys, " "))
+		TorrentUnit, MaxTorrentListBytes, strings.Join(settingKeys, " "))
 	res, err := s.run(ctx, h, asUser(script, "", h.Username), "")
 	if err != nil {
 		return nil, err
@@ -456,10 +469,11 @@ func parseTorrentStatus(out, user string) *TorrentDaemon {
 
 	daemon.Free, daemon.Capacity = parseDiskFree(first(found["disk"]))
 
-	// The listing and the seeding policy come back from one console, so they
-	// arrive in one section and the settings are taken out of it first.
-	listing, seeding := splitSeeding(strings.Join(found["torrents"], "\n"))
+	// The listing and the daemon's settings come back from one console, so
+	// they arrive in one section and the settings are taken out of it first.
+	listing, seeding, limit := splitSettings(strings.Join(found["torrents"], "\n"))
 	daemon.Seeding = seeding
+	daemon.ActiveLimit = limit
 	daemon.Torrents, daemon.Trouble = parseTorrentList(listing)
 
 	// What the probe managed to do decides what an empty list means.
@@ -478,15 +492,16 @@ func parseTorrentStatus(out, user string) *TorrentDaemon {
 	return daemon
 }
 
-// splitSeeding takes the three settings lines out of what the console printed
-// and hands back the rest, which is the torrent listing.
-func splitSeeding(out string) (string, TorrentSeeding) {
+// splitSettings takes the settings lines out of what the console printed and
+// hands back the rest, which is the torrent listing.
+func splitSettings(out string) (string, TorrentSeeding, int) {
 	seeding := TorrentSeeding{}
 	stop := false
+	limit := 0
 	lines := strings.Split(out, "\n")
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
-		match := seedingLine.FindStringSubmatch(strings.TrimSpace(line))
+		match := settingLine.FindStringSubmatch(strings.TrimSpace(line))
 		if match == nil {
 			kept = append(kept, line)
 			continue
@@ -498,6 +513,8 @@ func splitSeeding(out string) (string, TorrentSeeding) {
 			seeding.Ratio, _ = strconv.ParseFloat(match[2], 64)
 		case "remove_seed_at_ratio":
 			seeding.Remove = strings.EqualFold(match[2], "true")
+		case "max_active_limit":
+			limit, _ = strconv.Atoi(match[2])
 		}
 	}
 	// Deluge keeps a ratio whether or not it is using one, so the switch is
@@ -505,7 +522,12 @@ func splitSeeding(out string) (string, TorrentSeeding) {
 	if !stop {
 		seeding.Ratio = 0
 	}
-	return strings.Join(kept, "\n"), seeding
+	// Anything below -1 is deluge being asked something it never was; it reads
+	// as not knowing rather than as a limit.
+	if limit < -1 {
+		limit = 0
+	}
+	return strings.Join(kept, "\n"), seeding, limit
 }
 
 // parseDiskFree reads one `df -Pk` line: the filesystem, its size, what is
@@ -1278,6 +1300,85 @@ func cleanSeedRatio(ratio float64) (float64, error) {
 		return 0, invalid("a ratio between 0.1 and %d, or none at all to keep seeding", MaxSeedRatio)
 	}
 	return ratio, nil
+}
+
+// torrentLimitScript tells deluge how many torrents to work on at once.
+//
+// Deluge keeps three limits, and setting only the headline one would be a
+// setting that lies: max_active_limit caps the total, but its own defaults —
+// three downloading, five seeding — would still hold the queue under the
+// number that was chosen, and a sixth torrent would sit at 0% under a screen
+// saying ten are allowed. So all three are set to the same number, and the one
+// knob means what it says: this many at once, whatever they are doing.
+const torrentLimitScript = `set -u
+r=$1
+limit=$2
+conf="$r%[1]s"
+%[2]s
+
+[ -f "$conf/deployer.conf" ] || { printf 'this host has no downloader set up yet\n' >&2; exit 3; }
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl is-active --quiet -- %[3]s 2>/dev/null || exit 4
+fi
+
+out=$(console "config --set max_active_limit $limit; config --set max_active_downloading $limit; config --set max_active_seeding $limit")
+code=$?
+printf '@@code\n%%s\n' "$code"
+printf '@@out\n%%s\n' "$out"
+exit 0
+`
+
+// SetTorrentActiveLimit decides how many torrents deluge works on at once.
+// Everything past the limit waits as Queued until a slot opens, which is
+// deluge's own queue doing the waiting — so, like the seeding rule, it holds
+// when nobody is looking at the screen.
+//
+// The daemon has to be running to be told, so a stopped one is started first,
+// the same way adding a torrent does it.
+func (s *Service) SetTorrentActiveLimit(ctx context.Context, h *store.Host, limit int) (*TorrentDaemon, error) {
+	limit, err := cleanActiveLimit(limit)
+	if err != nil {
+		return nil, err
+	}
+	script := fmt.Sprintf(torrentLimitScript, torrentStateDir, consoleScript(), TorrentUnit)
+	cmd := asUser(script, "", strconv.Itoa(limit))
+
+	res, err := s.run(ctx, h, cmd, "")
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode == 4 {
+		// Nothing can be told to a daemon that is not running.
+		if err := s.Act(ctx, h, TorrentUnit, "start"); err != nil {
+			return nil, err
+		}
+		if res, err = s.run(ctx, h, cmd, ""); err != nil {
+			return nil, err
+		}
+	}
+	if res.ExitCode == 3 {
+		return nil, invalid("this host has no downloader set up yet")
+	}
+	if res.ExitCode != 0 {
+		return nil, failure(res, "could not change the torrent limit on "+h.Name)
+	}
+	if err := torrentConsoleError(res.Stdout); err != nil {
+		return nil, err
+	}
+	return s.TorrentStatus(ctx, h)
+}
+
+// cleanActiveLimit checks a limit. It becomes an argument on a command line,
+// so only a number deluge would read as one gets there: a count worth having,
+// or -1, which is deluge's own way of asking for no limit at all.
+func cleanActiveLimit(limit int) (int, error) {
+	if limit == -1 {
+		return -1, nil
+	}
+	if limit < 1 || limit > MaxActiveTorrents {
+		return 0, invalid("a number of torrents between 1 and %d, or -1 for no limit at all", MaxActiveTorrents)
+	}
+	return limit, nil
 }
 
 // delugeBool renders a flag the way deluge's own config command reads it.

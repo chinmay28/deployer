@@ -77,7 +77,8 @@ func (s *Server) handleTorrentAdd(w http.ResponseWriter, r *http.Request) {
 
 type torrentActionInput struct {
 	// Action is "start" or "stop" for the daemon, "pause", "resume" or "remove"
-	// for one torrent, and "seeding" for the rule that applies to all of them.
+	// for one torrent, and "seeding" or "limit" for the rules that apply to all
+	// of them.
 	Action string `json:"action"`
 	// ID names the torrent, for the actions that act on one.
 	ID string `json:"id"`
@@ -88,6 +89,9 @@ type torrentActionInput struct {
 	// deluge stops seeding it, and whether its entry then goes from the list.
 	Ratio  float64 `json:"ratio"`
 	Remove bool    `json:"remove"`
+	// Limit is how many torrents deluge works on at once, for the action that
+	// sets it. -1 is no limit at all.
+	Limit int `json:"limit"`
 }
 
 // handleTorrentAction runs the daemon, or acts on one torrent. Both live here
@@ -119,9 +123,11 @@ func (s *Server) handleTorrentAction(w http.ResponseWriter, r *http.Request) {
 	case "seeding":
 		daemon, err = s.Ops.SetTorrentSeeding(ctx, h,
 			hostops.TorrentSeeding{Ratio: in.Ratio, Remove: in.Remove})
+	case "limit":
+		daemon, err = s.Ops.SetTorrentActiveLimit(ctx, h, in.Limit)
 	default:
 		writeError(w, http.StatusBadRequest,
-			"the downloader can be started or stopped, a torrent paused, resumed or removed, and the seeding rule set")
+			"the downloader can be started or stopped, a torrent paused, resumed or removed, and the seeding rule or torrent limit set")
 		return
 	}
 	if err != nil {

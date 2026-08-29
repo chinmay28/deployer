@@ -208,6 +208,28 @@ func TestRealDelugeTakesWhatDeployerSends(t *testing.T) {
 	if len(after.Torrents) != 1 {
 		t.Errorf("the listing was lost alongside the settings: %+v", after.Torrents)
 	}
+	if after.ActiveLimit == 0 {
+		t.Error("deluge said nothing about how many torrents it works on at once")
+	}
+
+	// The torrent limit, the same way: the test that it is spelt right is
+	// deluge accepting it and saying it back.
+	limit := asUser(fmt.Sprintf(torrentLimitScript, torrentStateDir, consoleScript(), TorrentUnit),
+		root, "12")
+	out, code = runScript(t, limit, "", bin)
+	if code != 0 {
+		t.Fatalf("the torrent limit exited %d: %s", code, out)
+	}
+	if err := torrentConsoleError(out); err != nil {
+		t.Fatalf("deluge would not take the torrent limit: %v\n%s", err, out)
+	}
+	out, code = runScript(t, torrentStatusFor(root, currentUser(t)), "", bin)
+	if code != 0 {
+		t.Fatalf("status exited %d: %s", code, out)
+	}
+	if got := parseTorrentStatus(out, currentUser(t)).ActiveLimit; got != 12 {
+		t.Errorf("deluge came back with a limit of %d, want the 12 it was given", got)
+	}
 
 	// And removing it, with the flags deluge 2.1 wants.
 	//

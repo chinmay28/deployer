@@ -34,7 +34,7 @@ func torrentSetupFor(root, user, downloads, reset string) string {
 func torrentStatusFor(root, user string) string {
 	return asUser(fmt.Sprintf(torrentStatusScript,
 		torrentStateDir, consoleScript(), strings.Join(torrentPieces, " "),
-		TorrentUnit, MaxTorrentListBytes, strings.Join(seedingKeys, " ")), root, user)
+		TorrentUnit, MaxTorrentListBytes, strings.Join(settingKeys, " ")), root, user)
 }
 
 func torrentAddFor(root, name, source, path string) string {
@@ -112,6 +112,7 @@ func TestTorrentScriptsParse(t *testing.T) {
 		"setup":   renderTorrentSetup(),
 		"status":  fmt.Sprintf(torrentStatusScript, torrentStateDir, consoleScript(), "deluged", TorrentUnit, 1024, "a b"),
 		"seeding": fmt.Sprintf(torrentSeedingScript, torrentStateDir, consoleScript(), TorrentUnit),
+		"limit":   fmt.Sprintf(torrentLimitScript, torrentStateDir, consoleScript(), TorrentUnit),
 		"add":     fmt.Sprintf(torrentAddScript, torrentStateDir, consoleScript(), TorrentUnit),
 		"action":  fmt.Sprintf(torrentActionScript, torrentStateDir, consoleScript()),
 		"remove":  fmt.Sprintf(torrentRemoveScript, torrentStateDir, TorrentUnit),
@@ -1022,20 +1023,24 @@ printf 'LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=ena
 	}
 }
 
-// The seeding rule rides back in the same console as the listing, so it is
-// taken out of it before the torrents are read.
-func TestSplitSeeding(t *testing.T) {
-	listing, seeding := splitSeeding(`Name: A Film
+// The daemon's settings ride back in the same console as the listing, so they
+// are taken out of it before the torrents are read.
+func TestSplitSettings(t *testing.T) {
+	listing, seeding, limit := splitSettings(`Name: A Film
 ID: ` + strings.Repeat("a", 40) + `
 remove_seed_at_ratio: True
 stop_seed_at_ratio: True
 stop_seed_ratio: 1.5
+max_active_limit: 8
 `)
-	if strings.Contains(listing, "stop_seed") {
+	if strings.Contains(listing, "stop_seed") || strings.Contains(listing, "max_active") {
 		t.Errorf("the settings were left in the listing:\n%s", listing)
 	}
 	if seeding.Ratio != 1.5 || !seeding.Remove {
 		t.Errorf("seeding = %+v", seeding)
+	}
+	if limit != 8 {
+		t.Errorf("limit = %d, want deluge's own 8", limit)
 	}
 	torrents, trouble := parseTorrentList(listing)
 	if len(torrents) != 1 || trouble != "" {
@@ -1044,9 +1049,18 @@ stop_seed_ratio: 1.5
 
 	// Deluge keeps a ratio whether or not it is using one, so the switch is
 	// what decides — otherwise a screen would show a rule that never fires.
-	_, off := splitSeeding("stop_seed_at_ratio: False\nstop_seed_ratio: 2.0\nremove_seed_at_ratio: False\n")
+	_, off, _ := splitSettings("stop_seed_at_ratio: False\nstop_seed_ratio: 2.0\nremove_seed_at_ratio: False\n")
 	if off.Ratio != 0 || off.Remove {
 		t.Errorf("a rule that is switched off reads as %+v", off)
+	}
+
+	// -1 is deluge for no limit at all, and worth passing along as itself; a
+	// console that was never asked reads as not knowing rather than as a limit.
+	if _, _, none := splitSettings("max_active_limit: -1\n"); none != -1 {
+		t.Errorf("no limit at all reads as %d", none)
+	}
+	if _, _, unknown := splitSettings("Name: A Film\n"); unknown != 0 {
+		t.Errorf("a console that never said reads as a limit of %d", unknown)
 	}
 }
 
@@ -1082,6 +1096,57 @@ func TestSeedingScriptTellsDeluge(t *testing.T) {
 	// One console for three settings: starting one is a second of python.
 	if lines := strings.Count(strings.TrimSpace(log), "\n") + 1; lines != 1 {
 		t.Errorf("the rule took %d consoles, want 1:\n%s", lines, log)
+	}
+}
+
+// The torrent limit is deluge's own queue setting, and it is one knob over
+// deluge's three: setting only the total would leave deluge's own smaller
+// per-kind defaults holding the queue under the number that was chosen.
+func TestLimitScriptTellsDeluge(t *testing.T) {
+	root := t.TempDir()
+	work := t.TempDir()
+	bin := stubBin(t, rootStubs(delugeStubs(t, work, `printf 'Configuration value successfully updated.\n'`)))
+	if out, code := runScript(t, torrentSetupFor(root, "pi", "", ""), "", bin); code != 0 {
+		t.Fatalf("setup exited %d: %s", code, out)
+	}
+
+	script := asUser(fmt.Sprintf(torrentLimitScript, torrentStateDir, consoleScript(), TorrentUnit),
+		root, "12")
+	out, code := runScript(t, script, "", bin)
+	if code != 0 {
+		t.Fatalf("limit exited %d: %s", code, out)
+	}
+	if err := torrentConsoleError(out); err != nil {
+		t.Fatalf("deluge would not take the limit: %v", err)
+	}
+	log := read(t, filepath.Join(work, "console.log"))
+	for _, want := range []string{
+		"config --set max_active_limit 12",
+		"config --set max_active_downloading 12",
+		"config --set max_active_seeding 12",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("deluge was never told %q:\n%s", want, log)
+		}
+	}
+	// One console for three settings: starting one is a second of python.
+	if lines := strings.Count(strings.TrimSpace(log), "\n") + 1; lines != 1 {
+		t.Errorf("the limit took %d consoles, want 1:\n%s", lines, log)
+	}
+}
+
+func TestCleanActiveLimit(t *testing.T) {
+	if got, err := cleanActiveLimit(10); err != nil || got != 10 {
+		t.Errorf("cleanActiveLimit(10) = %v, %v", got, err)
+	}
+	// -1 is deluge's own word for no limit at all.
+	if got, err := cleanActiveLimit(-1); err != nil || got != -1 {
+		t.Errorf("cleanActiveLimit(-1) = %v, %v", got, err)
+	}
+	for _, limit := range []int{0, -2, MaxActiveTorrents + 1, 1 << 30} {
+		if _, err := cleanActiveLimit(limit); err == nil {
+			t.Errorf("cleanActiveLimit(%d) allowed it", limit)
+		}
 	}
 }
 

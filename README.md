@@ -530,6 +530,14 @@ enforces, so it holds at three in the morning, which is when torrents finish.
 Dropping the entry never touches the files: deluge removes the torrent, not the
 download.
 
+**How many run at once is a setting, not a surprise.** Deluge queues everything
+past a limit, and its defaults are small — a handful active, the rest sitting at
+0% as Queued, which reads as a stuck download the first time it happens. The
+screen sets the limit, or takes it off entirely. It is one number over deluge's
+three: `max_active_limit`, `max_active_downloading` and `max_active_seeding` are
+all set to it, so the knob means what it says — this many at once, whatever they
+are doing — and like the seeding rule it lives on the daemon itself.
+
 Removing a torrent asks whether the part already downloaded goes with it, because
 that is the one thing here that cannot be undone. Removing the downloader never
 touches the files at all: the service and deluge's state go, deluge stays

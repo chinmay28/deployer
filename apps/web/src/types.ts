@@ -478,6 +478,10 @@ export interface TorrentDaemon {
   asked: boolean
   /** What deluge does with a torrent once it has finished downloading. */
   seeding: TorrentSeeding
+  /** How many torrents deluge works on at once — the rest wait as Queued
+   *  until a slot opens. -1 is no limit at all; absent where deluge could not
+   *  be asked. */
+  activeLimit?: number
   /** What deluge said when it could not be asked. A state to report rather
    *  than an error: everything else on the screen is still true. */
   trouble?: string

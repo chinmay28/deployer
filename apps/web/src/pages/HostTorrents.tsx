@@ -43,6 +43,11 @@ const CALM_POLL_MS = 15000
  *  stop. Two is the number a private tracker usually asks for. */
 const RATIOS = [0, 1, 2, 5]
 
+/** The torrent limits worth a tap. -1 is deluge's own word for no limit at
+ *  all. Its defaults are small — three downloading at once — which reads as a
+ *  stuck download the first time a fourth torrent sits at 0%. */
+const LIMITS = [3, 5, 10, 20, -1]
+
 /** The states that mean the numbers are changing quickly. Seeding is not among
  *  them on purpose: it changes slowly, so it is watched slowly. */
 const MOVING = ['downloading', 'checking', 'moving', 'allocating']
@@ -266,6 +271,11 @@ export default function HostTorrents() {
             onSave={(ratio, removeIt) =>
               act('seeding', () => api.torrentSeeding(hostId, ratio, removeIt))
             }
+          />
+          <ActiveLimit
+            limit={daemon.activeLimit ?? 0}
+            busy={busy}
+            onSave={(limit) => act('limit', () => api.torrentLimit(hostId, limit))}
           />
           <Card>
             <FolderField folder={folder} onFolder={setFolder} />
@@ -741,6 +751,71 @@ function SeedingRule({
       </p>
       <button className="secondary block" onClick={() => onSave(ratio, removeIt)} disabled={!!busy || !changed}>
         {busy === 'seeding' ? 'Telling deluge…' : changed ? 'Save the rule' : 'Saved'}
+      </button>
+    </Card>
+  )
+}
+
+/**
+ * How many torrents deluge works on at once. The rest wait as Queued until a
+ * slot opens, which is deluge's queue doing what queues do — but its defaults
+ * are small, and a torrent sitting at 0% under a limit nobody chose reads as
+ * a download that is stuck rather than one that is waiting its turn.
+ *
+ * It is one number over deluge's three: Deployer sets the total and both
+ * per-kind limits to it, so the knob means what it says — this many at once,
+ * whatever they are doing.
+ */
+function ActiveLimit({
+  limit,
+  busy,
+  onSave,
+}: {
+  /** What deluge last said, or 0 where it could not be asked. */
+  limit: number
+  busy: string | null
+  onSave: (limit: number) => void
+}) {
+  const [choice, setChoice] = useState(limit)
+
+  // The control follows the host rather than every render, so a limit being
+  // chosen is not snatched back by the next poll.
+  useEffect(() => {
+    setChoice(limit)
+  }, [limit])
+
+  const changed = choice !== limit && choice !== 0
+  return (
+    <Card>
+      <Field
+        label="Torrents at once"
+        help="Everything past this waits as Queued until one finishes or is paused."
+      >
+        <div className="chips">
+          {LIMITS.map((option) => (
+            <button
+              key={option}
+              className={`chip ${option === choice ? 'on' : ''}`}
+              onClick={() => setChoice(option)}
+            >
+              {option === -1 ? 'No limit' : option}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <p className="sub">
+        {choice === -1
+          ? 'Deluge works on everything it is given, all at the same time.'
+          : choice === 0
+            ? 'Deluge has not said what its limit is — it answers when the daemon is running.'
+            : `Deluge works on up to ${choice} at once, downloading or seeding.`}
+      </p>
+      <button
+        className="secondary block"
+        onClick={() => onSave(choice)}
+        disabled={!!busy || !changed}
+      >
+        {busy === 'limit' ? 'Telling deluge…' : changed ? 'Save the limit' : 'Saved'}
       </button>
     </Card>
   )
