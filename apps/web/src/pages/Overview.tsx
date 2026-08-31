@@ -6,7 +6,7 @@ import { LaunchButton } from '../components/launch'
 import { TabPage } from '../components/Layout'
 import { HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
-import { ago, parts, ports } from '../lib/format'
+import { ago, ports } from '../lib/format'
 import type { Host, Installation } from '../types'
 
 /** The dashboard: one card per host, each carrying what is deployed to it,
@@ -74,24 +74,15 @@ function HostSummary({ host, installs }: { host: Host; installs: Installation[] 
 }
 
 /**
- * A host's apps by exception: a strip that says how many are well, rows only
- * for the ones that are not, and everything quiet on one dim line. A card is
- * for spotting trouble; the full list lives on the host's own page.
+ * A host's apps, trouble first: a strip that says how many are well at a
+ * glance, then every app as a row — a red one that says what is wrong for an
+ * app that is not responding, a quiet one-liner for the rest.
  */
 function HostApps({ installs }: { installs: Installation[] }) {
   const failing = installs.filter((i) => i.healthStatus === 'failing')
   const passing = installs.filter((i) => i.healthStatus === 'passing')
-  const unchecked = installs.filter((i) => i.healthStatus === 'unchecked')
-  const unknown = installs.filter((i) => i.healthStatus === 'unknown')
   const checked = passing.length + failing.length
-  const names = (list: Installation[]) => list.map((i) => i.appName).join(', ')
-
-  // The dim closing line: whatever is not worth a row of its own.
-  const quiet = parts(
-    passing.length > 0 && `Healthy: ${names(passing)}`,
-    unchecked.length > 0 && `No health check: ${names(unchecked)}`,
-    unknown.length > 0 && `Not checked yet: ${names(unknown)}`,
-  )
+  const rows = [...failing, ...installs.filter((i) => i.healthStatus !== 'failing')]
 
   return (
     <>
@@ -118,29 +109,27 @@ function HostApps({ installs }: { installs: Installation[] }) {
         ))}
       </div>
 
-      {failing.map((install, index) => (
+      {rows.map((install, index) => (
         <div key={install.id} style={{ marginTop: index === 0 ? 6 : 0 }}>
           {index > 0 && <div className="list-divider inset" />}
-          <ExceptionRow install={install} />
+          <AppRow install={install} />
         </div>
       ))}
-
-      {quiet && (
-        <>
-          {failing.length > 0 && <div className="list-divider" />}
-          <div className="sub truncate" style={{ marginTop: failing.length > 0 ? 0 : 10 }}>
-            {quiet}
-          </div>
-        </>
-      )}
     </>
   )
 }
 
-/** One app that needs attention. The card is a link to the host, so the row
+const DOT_COLOR: Record<Installation['healthStatus'], string> = {
+  passing: 'var(--good)',
+  failing: 'var(--bad)',
+  unknown: 'var(--text-dim)',
+  unchecked: 'var(--text-dim)',
+}
+
+/** One app on a host's card. The card is a link to the host, so the row
  *  navigates to the app by hand — the way the Open button already keeps its
  *  tap to itself. */
-function ExceptionRow({ install }: { install: Installation }) {
+function AppRow({ install }: { install: Installation }) {
   const navigate = useNavigate()
   const open = (e: MouseEvent) => {
     e.preventDefault()
@@ -149,15 +138,26 @@ function ExceptionRow({ install }: { install: Installation }) {
   }
   return (
     <div className="row" style={{ minHeight: 44 }} onClick={open}>
-      <span className="dot" style={{ color: 'var(--bad)' }} />
+      <span className="dot" style={{ color: DOT_COLOR[install.healthStatus] }} />
       <div className="grow" style={{ minWidth: 0 }}>
         <div className="truncate" style={{ fontSize: 14 }}>
           {install.appName}
+          {install.version && (
+            <span className="sub" style={{ fontSize: 12 }}>
+              {' '}
+              {install.version}
+            </span>
+          )}
         </div>
-        <div className="sub" style={{ fontSize: 12, color: 'var(--bad)' }}>
-          {parts('Not responding', install.version, ports(install.ports))}
-        </div>
+        {install.healthStatus === 'failing' && (
+          <div className="sub" style={{ fontSize: 12, color: 'var(--bad)' }}>
+            Not responding
+          </div>
+        )}
       </div>
+      <span className="sub" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        {ports(install.ports)}
+      </span>
       <LaunchButton installations={[install]} className="open-chip icon-only" label="" />
     </div>
   )
