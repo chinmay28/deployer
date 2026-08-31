@@ -275,9 +275,9 @@ func TestDeployEndToEndThroughAPI(t *testing.T) {
 
 	// The dashboard's single request has everything on it.
 	ov := decode[overview](t, do(t, h, "GET", "/api/overview", ""))
-	if len(ov.Hosts) != 1 || len(ov.Installations) != 1 || len(ov.Recent) != 2 {
-		t.Errorf("overview = %d hosts, %d installations, %d recent",
-			len(ov.Hosts), len(ov.Installations), len(ov.Recent))
+	if len(ov.Hosts) != 1 || len(ov.Installations) != 1 {
+		t.Errorf("overview = %d hosts, %d installations",
+			len(ov.Hosts), len(ov.Installations))
 	}
 
 	// Forgetting an installation leaves the deployment history intact.

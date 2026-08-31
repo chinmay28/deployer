@@ -630,7 +630,6 @@ export interface ShellSession {
 export interface Overview {
   hosts: Host[]
   installations: Installation[]
-  recentDeployments: Deployment[]
 }
 
 export interface SelfInfo {
