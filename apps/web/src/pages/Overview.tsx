@@ -1,14 +1,16 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import type { MouseEvent } from 'react'
 import { api } from '../api'
+import { HostMeters } from '../components/host'
 import { LaunchButton } from '../components/launch'
 import { TabPage } from '../components/Layout'
-import { DeploymentBadge, HealthBadge, HomeBadge, HostBadge } from '../components/status'
-import { Empty, Loading, Meter, SectionTitle, useLoader } from '../components/ui'
-import { primaryDisk } from '../lib/disk'
-import { ago, bytes, parts, percent, ports, time } from '../lib/format'
-import type { Host } from '../types'
+import { HealthBadge, HomeBadge, HostBadge } from '../components/status'
+import { Empty, Loading, useLoader } from '../components/ui'
+import { ago, parts, ports } from '../lib/format'
+import type { Host, Installation } from '../types'
 
-/** The dashboard: everything in one request, refreshed while it is open. */
+/** The dashboard: one card per host, each carrying what is deployed to it,
+ *  refreshed while it is open. */
 export default function Overview() {
   const { data, error, loading, offline } = useLoader(() => api.overview(), [], 5000)
 
@@ -17,88 +19,31 @@ export default function Overview() {
       <Loading error={error} offline={offline} hasData={!!data} />
       {!data && loading && <div className="empty">Loading…</div>}
 
-      {data && (
-        <>
-          <SectionTitle>Hosts</SectionTitle>
-          {data.hosts.length === 0 ? (
-            <Empty
-              message="No hosts yet. Add the machine you want to deploy to."
-              action={
-                <Link to="/hosts/new">
-                  <button className="primary">Add a host</button>
-                </Link>
-              }
-            />
-          ) : (
-            data.hosts.map((host) => <HostSummary key={host.id} host={host} />)
-          )}
-
-          <SectionTitle>Deployed apps</SectionTitle>
-          {data.installations.length === 0 ? (
-            <Empty
-              message="Nothing deployed yet. Add an app, then deploy it to a host."
-              action={
-                <Link to="/apps/new">
-                  <button className="primary">Add an app</button>
-                </Link>
-              }
-            />
-          ) : (
-            data.installations.map((install) => (
-              <Link key={install.id} className="card" to={`/apps/${install.appId}`}>
-                <div className="row between">
-                  <div className="grow">
-                    <div className="title">{install.appName}</div>
-                    <div className="sub">
-                      {parts(
-                        `on ${install.hostName}`,
-                        install.version,
-                        ports(install.ports),
-                        `updated ${ago(install.updatedAt)}`,
-                      )}
-                    </div>
-                  </div>
-                  <div className="row" style={{ gap: 6 }}>
-                    <LaunchButton installations={[install]} />
-                    <HealthBadge status={install.healthStatus} />
-                  </div>
-                </div>
+      {data &&
+        (data.hosts.length === 0 ? (
+          <Empty
+            message="No hosts yet. Add the machine you want to deploy to."
+            action={
+              <Link to="/hosts/new">
+                <button className="primary">Add a host</button>
               </Link>
-            ))
-          )}
-
-          {data.recentDeployments.length > 0 && (
-            <>
-              <SectionTitle>Recent deployments</SectionTitle>
-              {data.recentDeployments.map((deployment) => (
-                <Link key={deployment.id} className="card" to={`/deployments/${deployment.id}`}>
-                  <div className="row between">
-                    <div className="grow">
-                      {/* An uninstall is said in words rather than with the
-                          arrow a deploy gets: it went the other way, and this
-                          is not a row to misread at a glance. */}
-                      <div className="title">
-                        {deployment.kind === 'uninstall'
-                          ? `Uninstall ${deployment.appName} from ${deployment.hostName}`
-                          : `${deployment.appName} → ${deployment.hostName}`}
-                      </div>
-                      <div className="sub">{time(deployment.startedAt)}</div>
-                    </div>
-                    <DeploymentBadge status={deployment.status} />
-                  </div>
-                </Link>
-              ))}
-            </>
-          )}
-        </>
-      )}
+            }
+          />
+        ) : (
+          data.hosts.map((host) => (
+            <HostSummary
+              key={host.id}
+              host={host}
+              installs={data.installations.filter((install) => install.hostId === host.id)}
+            />
+          ))
+        ))}
     </TabPage>
   )
 }
 
-function HostSummary({ host }: { host: Host }) {
+function HostSummary({ host, installs }: { host: Host; installs: Installation[] }) {
   const sample = host.latest
-  const disk = primaryDisk(sample?.disks)
   return (
     <Link className="card" to={`/hosts/${host.id}`}>
       <div className="row between">
@@ -116,30 +61,46 @@ function HostSummary({ host }: { host: Host }) {
       </div>
 
       {sample ? (
-        <div className="meters">
-          <Meter label="CPU" value={sample.cpuPct} display={`${Math.round(sample.cpuPct)}%`} />
-          <Meter
-            label="Memory"
-            used={sample.memUsed}
-            total={sample.memTotal}
-            display={`${Math.round(percent(sample.memUsed, sample.memTotal))}%`}
-          />
-          {disk ? (
-            <Meter
-              label={`Disk ${disk.mount}`}
-              used={disk.usedBytes}
-              total={disk.totalBytes}
-              display={bytes(disk.totalBytes - disk.usedBytes) + ' free'}
-            />
-          ) : (
-            <Meter label="Disk" value={0} display="—" />
-          )}
-        </div>
+        <HostMeters sample={sample} />
       ) : (
         <div className="sub" style={{ marginTop: 10 }}>
           {host.lastError ? host.lastError : 'Waiting for the first reading…'}
         </div>
       )}
+
+      {installs.length > 0 && (
+        <>
+          <div className="list-divider" />
+          {installs.map((install) => (
+            <InstallRow key={install.id} install={install} />
+          ))}
+        </>
+      )}
     </Link>
+  )
+}
+
+/** One deployed app on a host's card. The card is a link to the host, so the
+ *  row navigates to the app by hand — the way the Open button already keeps
+ *  its tap to itself. */
+function InstallRow({ install }: { install: Installation }) {
+  const navigate = useNavigate()
+  const open = (e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    navigate(`/apps/${install.appId}`)
+  }
+  const detail = parts(install.version, ports(install.ports))
+  return (
+    <div className="row between" style={{ padding: '5px 0' }} onClick={open}>
+      <div className="grow">
+        <div style={{ fontSize: 14 }}>{install.appName}</div>
+        {detail && <div className="sub">{detail}</div>}
+      </div>
+      <div className="row" style={{ gap: 6 }}>
+        <LaunchButton installations={[install]} />
+        <HealthBadge status={install.healthStatus} />
+      </div>
+    </div>
   )
 }

@@ -117,11 +117,10 @@ func (s *Server) handleRedeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 // overview is everything the dashboard needs in one request, which matters on
-// a phone.
+// a phone: the hosts, and what is deployed to each of them.
 type overview struct {
 	Hosts         []hostView            `json:"hosts"`
 	Installations []*store.Installation `json:"installations"`
-	Recent        []*store.Deployment   `json:"recentDeployments"`
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -140,16 +139,11 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err, "overview")
 		return
 	}
-	recent, err := s.DB.ListDeployments(r.Context(), store.DeploymentFilter{Limit: 10})
-	if err != nil {
-		s.writeStoreError(w, err, "overview")
-		return
-	}
 	views := make([]hostView, 0, len(hostList))
 	for _, h := range hostList {
 		views = append(views, hostView{Host: h, Latest: latest[h.ID]})
 	}
-	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: withDerived(installs), Recent: recent})
+	writeJSON(w, http.StatusOK, overview{Hosts: views, Installations: withDerived(installs)})
 }
 
 func (s *Server) installationFromPath(r *http.Request) (*store.Installation, error) {

@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { HostMeters } from '../components/host'
 import { TabPage } from '../components/Layout'
 import { HomeBadge, HostBadge } from '../components/status'
 import { Empty, Loading, useLoader } from '../components/ui'
-import { ago } from '../lib/format'
+import { ago, parts, uptime } from '../lib/format'
 
 export default function Hosts() {
   const { data, error, loading, offline } = useLoader(() => api.hosts(), [], 10000)
@@ -24,27 +25,57 @@ export default function Hosts() {
         />
       )}
 
-      {data?.map((host) => (
-        <Link key={host.id} className="card" to={`/hosts/${host.id}`}>
-          <div className="row between">
-            <div className="grow">
-              <div className="title">{host.name}</div>
-              <div className="sub">
-                {host.username}@{host.address}
-                {host.port !== 22 ? `:${host.port}` : ''}
+      {data?.map((host) => {
+        const sample = host.latest
+        return (
+          <Link key={host.id} className="card" to={`/hosts/${host.id}`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">{host.name}</div>
+                <div className="sub">
+                  {host.username}@{host.address}
+                  {host.port !== 22 ? `:${host.port}` : ''}
+                </div>
+              </div>
+              <div className="row" style={{ gap: 6 }}>
+                {host.isSelf && <HomeBadge />}
+                <HostBadge status={host.status} />
               </div>
             </div>
-            <div className="row" style={{ gap: 6 }}>
-              {host.isSelf && <HomeBadge />}
-              <HostBadge status={host.status} />
+
+            {sample && <HostMeters sample={sample} />}
+
+            <div className="sub" style={{ marginTop: sample ? 8 : 10 }}>
+              {parts(
+                host.isSelf && 'Deployer runs here',
+                host.os || 'Not yet identified',
+                host.arch,
+                host.kernel,
+              )}
             </div>
-          </div>
-          <div className="sub" style={{ marginTop: 8 }}>
-            {host.isSelf ? 'Deployer runs here · ' : ''}
-            {host.os ? `${host.os} · ${host.arch}` : 'Not yet identified'} · seen {ago(host.lastSeenAt)}
-          </div>
-        </Link>
-      ))}
+            {/* The machine's own state where there is a reading, and why there
+                is none where there is not. */}
+            {sample ? (
+              <div className="sub" style={{ marginTop: 4 }}>
+                {parts(
+                  `up ${uptime(sample.uptimeS)}`,
+                  `load ${sample.load1.toFixed(2)}`,
+                  sample.tempC != null && `${sample.tempC.toFixed(1)} °C`,
+                  host.status === 'online' && !host.sudoOk && 'no passwordless sudo',
+                  `seen ${ago(host.lastSeenAt)}`,
+                )}
+              </div>
+            ) : (
+              <div className="sub" style={{ marginTop: 4 }}>
+                {parts(
+                  `seen ${ago(host.lastSeenAt)}`,
+                  host.lastError || 'Waiting for the first reading…',
+                )}
+              </div>
+            )}
+          </Link>
+        )
+      })}
     </TabPage>
   )
 }
