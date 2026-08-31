@@ -19,6 +19,10 @@ import { Sheet } from './ui'
  * The key bar. A phone keyboard has no Ctrl, no Esc, no Tab and no arrows,
  * which between them are most of what a shell is driven by. Ctrl is a sticky
  * modifier rather than a chord, because there is no chording on a touchscreen.
+ * The bar has two shapes: with the soft keyboard up every row is terminal
+ * lost, so it is one thin row; with the keyboard away the bottom of the phone
+ * is free, and the same keys spread into a keypad — arrows and Enter under
+ * the right thumb, the rest in keys big enough to hit without looking.
  *
  * The size. The soft keyboard covers half the screen, so the terminal is sized
  * to the visual viewport rather than the window, and the host is told the new
@@ -144,6 +148,13 @@ export default function TerminalView({
   const [mods, setMods] = useState({ ctrl: false, alt: false })
   const [state, setState] = useState<ConnectionState>('connecting')
   const [extras, setExtras] = useState(() => window.localStorage.getItem(EXTRAS_KEY) === 'on')
+  /** Whether the soft keyboard is up — what decides the shape of the keys
+   *  below. Nothing announces the keyboard directly; how much of the window
+   *  the visual viewport is not is the announcement. */
+  const [kbOpen, setKbOpen] = useState(false)
+  /** A device driven by a mouse has every key already and wants the thin row
+   *  whatever the viewport does; the keypad is for fingers. */
+  const [coarse] = useState(() => window.matchMedia('(pointer: coarse)').matches)
   const [fontSize, setFontSize] = useState(readFontSize)
   /** What the terminal actually measured. Shown beside the size buttons,
    *  because "how many columns is this" is the only thing they are for. */
@@ -178,8 +189,27 @@ export default function TerminalView({
   }, [])
 
   const send = useCallback((bytes: number[]) => {
-    senderRef.current?.send(bytes)
-    termRef.current?.focus()
+    // An armed modifier applies to a key from the bar the same as to a typed
+    // one — on the keypad, with no keyboard up, the bar is the only place a
+    // key can come from at all. Single characters only, the same rule the
+    // typed path applies.
+    const { ctrl, alt } = modsRef.current
+    let out = bytes
+    if (bytes.length === 1) {
+      if (ctrl) {
+        const code = controlCode(String.fromCharCode(bytes[0]))
+        if (code !== null) out = [code]
+      }
+      if (alt) out = [0x1b, ...out]
+      if (ctrl || alt) {
+        modsRef.current = { ctrl: false, alt: false }
+        setMods({ ctrl: false, alt: false })
+      }
+    }
+    senderRef.current?.send(out)
+    // Focus follows a key only where it already was: tapping ↑ on the keypad
+    // must not raise the keyboard the keypad is standing in for.
+    if (stageRef.current?.contains(document.activeElement)) termRef.current?.focus()
   }, [])
 
   // Built once for the life of the session. Rebuilding it would throw the
@@ -456,6 +486,9 @@ export default function TerminalView({
     const apply = () => {
       root.style.height = `${vv.height}px`
       root.style.transform = `translateY(${vv.offsetTop}px)`
+      // Anything that takes a third of the window is the keyboard; browser
+      // chrome coming and going is far smaller.
+      setKbOpen(window.innerHeight - vv.height > 140)
     }
     apply()
     vv.addEventListener('resize', apply)
@@ -590,34 +623,6 @@ export default function TerminalView({
             )}
           </div>
         )}
-        <div className="term-row">
-          {KEYS.map((key) => (
-            <KeyButton key={key.label} title={key.title} onPress={() => send(key.bytes)}>
-              {key.label}
-            </KeyButton>
-          ))}
-          <KeyButton
-            title="Ctrl — then the next key"
-            held={mods.ctrl}
-            onPress={() => arm('ctrl', !modsRef.current.ctrl)}
-          >
-            Ctrl
-          </KeyButton>
-          <KeyButton
-            title={picked ? 'Copy what is picked' : 'Pick lines to copy'}
-            held={selecting || picked}
-            onPress={copy}
-          >
-            Copy
-          </KeyButton>
-          <KeyButton title="Paste into the shell" onPress={paste}>
-            Paste
-          </KeyButton>
-          <KeyButton title="More keys" held={extras} onPress={() => showExtras(!extras)}>
-            •••
-          </KeyButton>
-        </div>
-
         {extras && (
           <div className="term-row">
             {/* Text size leads the row. It is the control this screen needs most
@@ -644,6 +649,110 @@ export default function TerminalView({
                 {key.label}
               </KeyButton>
             ))}
+          </div>
+        )}
+
+        {kbOpen || !coarse ? (
+          <div className="term-row">
+            {KEYS.map((key) => (
+              <KeyButton key={key.label} title={key.title} onPress={() => send(key.bytes)}>
+                {key.label}
+              </KeyButton>
+            ))}
+            <KeyButton
+              title="Ctrl — then the next key"
+              held={mods.ctrl}
+              onPress={() => arm('ctrl', !modsRef.current.ctrl)}
+            >
+              Ctrl
+            </KeyButton>
+            <KeyButton
+              title={picked ? 'Copy what is picked' : 'Pick lines to copy'}
+              held={selecting || picked}
+              onPress={copy}
+            >
+              Copy
+            </KeyButton>
+            <KeyButton title="Paste into the shell" onPress={paste}>
+              Paste
+            </KeyButton>
+            <KeyButton title="More keys" held={extras} onPress={() => showExtras(!extras)}>
+              •••
+            </KeyButton>
+          </div>
+        ) : (
+          /* The keypad, standing where the keyboard would: three rows of four
+             on the left, and the cluster a shell leans on hardest — arrows
+             around Enter — under the right thumb. Tapping the screen raises
+             the keyboard and folds this back into the row above. */
+          <div className="term-pad">
+            <div className="term-pad-main">
+              <KeyButton title="Escape" onPress={() => send([0x1b])}>
+                Esc
+              </KeyButton>
+              <KeyButton title="Tab — complete" onPress={() => send([0x09])}>
+                Tab
+              </KeyButton>
+              <KeyButton
+                title="Ctrl — then the next key"
+                held={mods.ctrl}
+                onPress={() => arm('ctrl', !modsRef.current.ctrl)}
+              >
+                Ctrl
+              </KeyButton>
+              <KeyButton title="Ctrl-C — stop what is running" onPress={() => send([0x03])}>
+                ^C
+              </KeyButton>
+              <KeyButton
+                title="Alt — then the next key"
+                held={mods.alt}
+                onPress={() => arm('alt', !modsRef.current.alt)}
+              >
+                Alt
+              </KeyButton>
+              <KeyButton title="Slash" onPress={() => send([0x2f])}>
+                /
+              </KeyButton>
+              <KeyButton title="Dash" onPress={() => send([0x2d])}>
+                -
+              </KeyButton>
+              <KeyButton
+                title={picked ? 'Copy what is picked' : 'Pick lines to copy'}
+                held={selecting || picked}
+                onPress={copy}
+              >
+                Copy
+              </KeyButton>
+              <KeyButton title="More keys" held={extras} onPress={() => showExtras(!extras)}>
+                •••
+              </KeyButton>
+              <KeyButton title="Start of the line" onPress={() => send([0x1b, 0x5b, 0x48])}>
+                Home
+              </KeyButton>
+              <KeyButton title="End of the line" onPress={() => send([0x1b, 0x5b, 0x46])}>
+                End
+              </KeyButton>
+              <KeyButton title="Paste into the shell" onPress={paste}>
+                Paste
+              </KeyButton>
+            </div>
+            <div className="term-pad-nav">
+              <KeyButton className="up" title="Up — previous command" onPress={() => send([0x1b, 0x5b, 0x41])}>
+                ↑
+              </KeyButton>
+              <KeyButton className="left" title="Left" onPress={() => send([0x1b, 0x5b, 0x44])}>
+                ←
+              </KeyButton>
+              <KeyButton className="enter" title="Enter — run it" onPress={() => send([0x0d])}>
+                Enter
+              </KeyButton>
+              <KeyButton className="right" title="Right" onPress={() => send([0x1b, 0x5b, 0x43])}>
+                →
+              </KeyButton>
+              <KeyButton className="down" title="Down" onPress={() => send([0x1b, 0x5b, 0x42])}>
+                ↓
+              </KeyButton>
+            </div>
           </div>
         )}
       </div>
@@ -740,17 +849,19 @@ function KeyButton({
   children,
   title,
   held,
+  className,
   onPress,
 }: {
   children: React.ReactNode
   title: string
   held?: boolean
+  className?: string
   onPress: () => void
 }) {
   return (
     <button
       type="button"
-      className={`term-key ${held ? 'held' : ''}`}
+      className={`term-key ${className ?? ''} ${held ? 'held' : ''}`}
       title={title}
       aria-label={title}
       aria-pressed={held}
