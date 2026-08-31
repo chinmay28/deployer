@@ -34,7 +34,9 @@ import { Sheet } from './ui'
  * none, so Copy arms a mode in which a drag picks lines instead of scrolling.
  * And because Deployer is usually plain http on a LAN, where a browser hands a
  * script no clipboard at all, both fall back to a box of text the phone's own
- * Copy and Paste can reach.
+ * Copy and Paste can reach. When the phone does offer Paste over the screen —
+ * a long press while the keyboard is up — that lands in the shell too; the
+ * keys are the way that always exists.
  */
 
 /** Colours xterm needs as concrete values; it cannot read a CSS variable. Kept
@@ -273,6 +275,38 @@ export default function TerminalView({
       sender.send(Array.from(data, (ch) => ch.charCodeAt(0) & 0xff))
     })
 
+    // The phone's own Paste, long-pressed out of the callout over the screen.
+    // xterm forwards a `paste` event itself, but iOS often announces this
+    // paste only as an input event on the hidden textarea, of a kind xterm
+    // does not read — so the text landed in a box nobody looks at and the
+    // shell saw nothing. Both announcements are caught here in the capture
+    // phase and walked through the same door as the Paste key, and stopping
+    // them there is what keeps the two paths from both delivering.
+    const nativePaste = (text: string | null | undefined): boolean => {
+      if (!text) return false
+      // Modifiers are for keys, and a paste is not a keystroke.
+      modsRef.current = { ctrl: false, alt: false }
+      setMods({ ctrl: false, alt: false })
+      term.paste(text)
+      return true
+    }
+    const onPaste = (e: ClipboardEvent) => {
+      if (nativePaste(e.clipboardData?.getData('text/plain'))) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+    }
+    const onBeforeInput = (e: Event) => {
+      const ev = e as InputEvent
+      if (ev.inputType !== 'insertFromPaste') return
+      if (nativePaste(ev.data ?? ev.dataTransfer?.getData('text/plain'))) {
+        ev.preventDefault()
+        ev.stopImmediatePropagation()
+      }
+    }
+    stage.addEventListener('paste', onPaste, true)
+    stage.addEventListener('beforeinput', onBeforeInput, true)
+
     // Whether there is anything to copy is xterm's to know: a drag here, a
     // mouse on a desktop, or a selection dropped by what the shell printed
     // next all arrive the same way.
@@ -353,6 +387,8 @@ export default function TerminalView({
     fitLater()
 
     return () => {
+      stage.removeEventListener('paste', onPaste, true)
+      stage.removeEventListener('beforeinput', onBeforeInput, true)
       document.removeEventListener('visibilitychange', onVisible)
       dark.removeEventListener('change', onTheme)
       window.clearTimeout(fitTimer)
