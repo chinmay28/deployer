@@ -1488,6 +1488,63 @@ body.terminal-open .tabbar {
   color: #fff;
 }
 
+/* The keypad, for when the soft keyboard is away. The bottom of the phone is
+   free then, so the keys spread into it: three rows of four on the left, and
+   the arrows around Enter on the right, where the thumb already is. The
+   moment the keyboard comes up, the same keys fold back into the thin row. */
+.term-pad {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+.term-pad-main {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.term-pad-nav {
+  display: grid;
+  grid-template-columns: minmax(40px, 46px) minmax(58px, 74px) minmax(40px, 46px);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.term-pad-nav .up {
+  grid-area: 1 / 2;
+}
+
+.term-pad-nav .left {
+  grid-area: 2 / 1;
+}
+
+.term-pad-nav .enter {
+  grid-area: 2 / 2;
+}
+
+.term-pad-nav .right {
+  grid-area: 2 / 3;
+}
+
+.term-pad-nav .down {
+  grid-area: 3 / 2;
+}
+
+.term-pad .term-key {
+  min-width: 0;
+  min-height: 46px;
+  padding: 0 4px;
+  font-size: 15px;
+  border-radius: 12px;
+}
+
+/* The one key whose label is a word rather than a glyph. */
+.term-pad-nav .term-key.enter {
+  font-size: 12px;
+}
+
 /* A row of links inside a card, each its own tap target. */
 .link-row {
   display: block;
