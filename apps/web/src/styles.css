@@ -599,6 +599,29 @@ button.card {
   background: var(--bad);
 }
 
+/* The health strip on a host card: one slot per deployed app — green, red, or
+   the quiet border colour for an app with nothing to report. It answers "is
+   anything wrong here?" before the rows below say what. */
+.seg-strip {
+  display: flex;
+  gap: 3px;
+}
+
+.seg-strip > span {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.seg-strip > .good {
+  background: var(--good);
+}
+
+.seg-strip > .bad {
+  background: var(--bad);
+}
+
 /* ---------- forms ---------- */
 
 label {
@@ -815,6 +838,15 @@ button.block {
   /* A pill this small needs a deeper push than a full-width button to read as
      pressed at all. */
   --press: 0.94;
+}
+
+/* On a host card's exception row the chip shrinks to its icon: the row already
+   names the app, and a column of labelled pills would out-shout the meters. */
+.open-chip.icon-only {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  justify-content: center;
 }
 
 /* A pill the size of a badge is smaller than a thumb. The visible chip stays
@@ -1279,6 +1311,12 @@ button.block {
   height: 1px;
   background: var(--border);
   margin: 12px -14px;
+}
+
+/* Between rows within a card: no vertical air of its own, and it starts where
+   the rows' text does — after the status dot — rather than at the card edge. */
+.list-divider.inset {
+  margin: 0 -14px 0 19px;
 }
 
 /* --- Terminal ---------------------------------------------------------- */
