@@ -1,6 +1,7 @@
 package version
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -13,7 +14,7 @@ func TestStringIsUnstampedByDefault(t *testing.T) {
 	if Patch != "0" {
 		t.Fatalf("Patch = %q, want the unstamped default", Patch)
 	}
-	if got, want := String(), "v2026.8.0"; got != want {
+	if got, want := String(), fmt.Sprintf("v%d.%d.0", Year, Month); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	if Stamped() {
@@ -24,7 +25,7 @@ func TestStringIsUnstampedByDefault(t *testing.T) {
 func TestStringUsesTheStampedPatch(t *testing.T) {
 	t.Cleanup(func() { Patch = "0" })
 	Patch = "42"
-	if got, want := String(), "v2026.8.42"; got != want {
+	if got, want := String(), fmt.Sprintf("v%d.%d.42", Year, Month); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
 	if !Stamped() {

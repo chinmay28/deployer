@@ -774,6 +774,7 @@ make test-torrent   # drive a real deluge: add, pause and remove a torrent
 cd apps/web && npm run dev   # Vite dev server, proxying /api to :8899
 
 make version        # print the version this tree would build as
+make bump-version   # move the version line to this month, UTC
 ```
 
 ### Versioning
@@ -783,8 +784,10 @@ is the repository's commit count, so `v2026.8.42` is the 42nd commit on the
 2026.8 line. There is no semantic major/minor: the leading numbers say *when* a
 release line opened, not what it promises about compatibility.
 
-`Year` and `Month` are constants in `server/internal/version/version.go`, bumped
-by hand when a line opens — deliberately not read from the build clock, so
+`Year` and `Month` are constants in `server/internal/version/version.go`. A
+line opens with a branch: the first commit on a branch runs `make bump-version`,
+which sets them to the current month in UTC (CLAUDE.md asks Claude to do this
+without being told). They are deliberately not read from the build clock, so
 rebuilding an old tree still reports what it originally shipped. The month is
 not zero-padded (`v2026.8.42`, not `v2026.08.42`), because semver forbids a
 leading zero and every version has to stay something a semver parser accepts.

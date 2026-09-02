@@ -8,9 +8,9 @@
  *
  *   - YEAR/MONTH are source constants, read out of
  *     server/internal/version/version.go so there is exactly one declaration
- *     of them in the tree. Bump them there when a release line opens; they are
- *     not taken from the build clock, which would move the version without a
- *     commit.
+ *     of them in the tree. `--bump` moves them to the month a branch opens in
+ *     (see CLAUDE.md); they are not taken from the build clock, which would
+ *     move the version without a commit.
  *   - PATCH comes from `git rev-list --count HEAD`, which only exists at build
  *     time: the Go binary gets it stamped in by -ldflags, the web bundle gets
  *     it inlined by Vite. Both call this file, so they can never disagree.
@@ -18,10 +18,12 @@
  * Usage:
  *   node scripts/version.mjs            # print e.g. v2026.8.42
  *   node scripts/version.mjs --patch    # print just the commit count (42)
+ *   node scripts/version.mjs --bump     # set YEAR.MONTH to this month, UTC
+ *   node scripts/version.mjs --bump 2026.9   # or to a month named outright
  *   import { appVersion } from './scripts/version.mjs'
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -44,6 +46,36 @@ function yearMonth() {
     throw new Error(`Month = ${month} in ${GO_VERSION_FILE}; want a calendar month (1-12)`)
   }
   return { year, month }
+}
+
+/**
+ * Rewrite Year/Month in the Go source to `line` — "YYYY.M", or this month in
+ * UTC when not given. Returns what the line was and what it is now, so the
+ * caller can say whether anything moved. The same regex that reads the
+ * constants writes them, so the file keeps the shape the Go test checks.
+ */
+export function bumpYearMonth(line) {
+  const target = line ? parseLine(line) : thisMonth()
+  const before = yearMonth()
+  let src = readFileSync(GO_VERSION_FILE, 'utf8')
+  for (const [name, value] of [['Year', target.year], ['Month', target.month]]) {
+    src = src.replace(new RegExp(`^(\\s*${name}\\s*=\\s*)\\d+(\\s*)$`, 'm'), `$1${value}$2`)
+  }
+  writeFileSync(GO_VERSION_FILE, src)
+  return { before, after: yearMonth() }
+}
+
+function thisMonth() {
+  const now = new Date()
+  return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 }
+}
+
+function parseLine(line) {
+  const m = /^(\d{4})\.(\d{1,2})$/.exec(line)
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) {
+    throw new Error(`--bump wants a line like 2026.9, got ${JSON.stringify(line)}`)
+  }
+  return { year: Number(m[1]), month: Number(m[2]) }
 }
 
 /** Run git in the repo root; null if it fails (no repo, no git, old git). */
@@ -101,6 +133,18 @@ export function appVersion() {
 
 // Invoked directly (by the build scripts), print rather than export.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.stdout.write(process.argv.includes('--patch') ? commitCount() : appVersion())
-  process.stdout.write('\n')
+  const args = process.argv.slice(2)
+  const bump = args.indexOf('--bump')
+  if (bump >= 0) {
+    const { before, after } = bumpYearMonth(args[bump + 1])
+    const moved = before.year !== after.year || before.month !== after.month
+    process.stdout.write(
+      moved
+        ? `version line ${before.year}.${before.month} -> ${after.year}.${after.month}\n`
+        : `version line already ${after.year}.${after.month}\n`,
+    )
+  } else {
+    process.stdout.write(args.includes('--patch') ? commitCount() : appVersion())
+    process.stdout.write('\n')
+  }
 }
