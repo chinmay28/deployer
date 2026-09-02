@@ -122,3 +122,10 @@ export function severity(pct: number): '' | 'warn' | 'bad' {
   if (pct >= 75) return 'warn'
   return ''
 }
+
+/** The system as it is said out loud: "Debian 13 (trixie)", not the
+ *  "Debian GNU/Linux 13 (trixie)" os-release spells out. Ubuntu and the rest
+ *  already say it that way and pass through untouched. */
+export function osName(os: string): string {
+  return os.replace(' GNU/Linux', '')
+}

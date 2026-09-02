@@ -622,6 +622,36 @@ button.card {
   background: var(--bad);
 }
 
+/* The shortcuts on a host's card: its files, services, terminal and jobs as
+   four equal chips, icon over word, each a full tap target. They are buttons
+   inside a card that is itself a link, so they take their own tap and give
+   the card nothing. On a host Deployer cannot reach they dim, and the
+   disabled state is the button's own. */
+.tools {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 6px 4px;
+  border-color: var(--border);
+  font-size: 11px;
+  --press: 0.95;
+}
+
+.tool svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* ---------- forms ---------- */
 
 label {
