@@ -6,11 +6,13 @@
 // a plain number, not zero-padded: that keeps the string valid semver, which
 // forbids a leading zero, and nothing here orders versions by sorting text.
 //
-// Year and Month are declared here in source and bumped by hand when a release
-// line opens — deliberately not read from the build clock, which would move the
-// version without a commit and make a rebuild of an old tree disagree with what
-// it originally shipped. The patch number can only come from git, which a
-// compiled binary has no access to, so it is stamped at link time instead:
+// Year and Month are declared here in source and moved to the current month
+// when a branch opens (`make bump-version`, which CLAUDE.md asks for as the
+// first thing on a branch) — deliberately not read from the build clock, which
+// would move the version without a commit and make a rebuild of an old tree
+// disagree with what it originally shipped. The patch number can only come
+// from git, which a compiled binary has no access to, so it is stamped at link
+// time instead:
 //
 //	go build -ldflags "-X github.com/chinmay28/deployer/server/internal/version.Patch=$(git rev-list --count HEAD)"
 //
@@ -21,15 +23,17 @@ package version
 
 import "strconv"
 
-// Year and Month of the release line, bumped by hand. Month is a calendar
-// month, 1–12.
+// Year and Month of the release line: the month the current branch opened in,
+// UTC. `make bump-version` rewrites them; keep each on its own line in this
+// shape, which is what that script and the PWA build look for. Month is a
+// calendar month, 1–12.
 //
 // There is no semantic major/minor: the leading numbers say *when* a release
 // line opened, not what it promises about compatibility. What breaks on an
 // upgrade is called out in the changelog, which is the thing to read.
 const (
 	Year  = 2026
-	Month = 8
+	Month = 9
 )
 
 // Patch is the repository's commit count, stamped at link time (see the

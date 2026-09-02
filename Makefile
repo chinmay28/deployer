@@ -11,7 +11,7 @@ VERSION_PKG := github.com/chinmay28/deployer/server/internal/version
 PATCH := $(shell node scripts/version.mjs --patch 2>/dev/null)
 LDFLAGS := -s -w $(if $(PATCH),-X $(VERSION_PKG).Patch=$(PATCH))
 
-.PHONY: build server web test test-installer test-provision test-torrent vet run clean version
+.PHONY: build server web test test-installer test-provision test-torrent vet run clean version bump-version
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
@@ -22,6 +22,11 @@ server: | $(WEB_DIST)/index.html
 ## version: print the version this tree would build as
 version:
 	@node scripts/version.mjs
+
+## bump-version: move the version line to this month (UTC) — the first commit
+## on a branch does this, so a release says when its work began
+bump-version:
+	@node scripts/version.mjs --bump
 
 ## The Go binary embeds $(WEB_DIST), so it needs to exist even when only the
 ## server is being built. This placeholder is replaced by the real PWA.
