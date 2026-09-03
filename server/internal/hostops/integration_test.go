@@ -99,6 +99,17 @@ func TestFilesOverSSH(t *testing.T) {
 		t.Errorf("path = %q, want %q", listing.Path, dir)
 	}
 
+	usage, err := svc.Usage(ctx, host, dir)
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if usage.Files != 1 || usage.Dirs != 0 || usage.Bytes <= 0 {
+		t.Errorf("usage = %+v, want one file, no folders, some disk", usage)
+	}
+	if _, err := svc.Usage(ctx, host, path); err == nil {
+		t.Error("measuring a file succeeded, want it refused: the listing already has its size")
+	}
+
 	// Changing the mode, first on the file and then on the directory with
 	// everything under it, through the same connection path.
 	mode, err := svc.Chmod(ctx, host, path, "600", false)

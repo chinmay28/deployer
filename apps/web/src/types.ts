@@ -139,6 +139,21 @@ export interface DirListing {
   asUser: string
 }
 
+/** What a directory holds, added up all the way down. */
+export interface DirUsage {
+  /** The directory measured, with a symlink resolved to where it led. */
+  path: string
+  /** Everything under it that is not a directory; a symlink counts as itself. */
+  files: number
+  /** Directories under it, not counting itself. */
+  dirs: number
+  /** Space on disk as du reports it: blocks allocated, not lengths added up. */
+  bytes: number
+  /** Places the walk could not enter. Above zero, the numbers are a floor. */
+  unreadable: number
+  asUser: string
+}
+
 export interface HostFile {
   path: string
   size: number

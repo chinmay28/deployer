@@ -29,6 +29,8 @@ func TestFileRequestsValidateThePath(t *testing.T) {
 		{"read a relative path", "GET", "/api/hosts/%d/files/content?path=etc/hosts", ""},
 		{"read a home-relative path", "GET", "/api/hosts/%d/files/content?path=~/.bashrc", ""},
 		{"delete without a path", "DELETE", "/api/hosts/%d/files", ""},
+		{"usage without a path", "GET", "/api/hosts/%d/files/usage", ""},
+		{"usage of a relative path", "GET", "/api/hosts/%d/files/usage?path=pi-apps", ""},
 		{"write without a path", "PUT", "/api/hosts/%d/files/content", `{"path":"","content":"x"}`},
 		{"write a relative path", "PUT", "/api/hosts/%d/files/content", `{"path":"etc/hosts","content":"x"}`},
 		{"mkdir with a relative path", "POST", "/api/hosts/%d/files/mkdir", `{"path":"tmp/x"}`},
