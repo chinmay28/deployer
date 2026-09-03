@@ -4,7 +4,7 @@ import { ApiError, api } from '../api'
 import { Page } from '../components/Layout'
 import { Badge, Banner, Card, Empty, Field, Loading, Sheet, useLoader } from '../components/ui'
 import { ago, bytes } from '../lib/format'
-import type { DirEntry } from '../types'
+import type { DirEntry, DirUsage } from '../types'
 
 /**
  * The file browser. One directory at a time, the path in the query string so
@@ -332,6 +332,7 @@ function EntrySheet({
             {entry.group ? `:${entry.group}` : ''}
             {entry.type === 'file' ? ` · ${bytes(entry.size)}` : ''}
           </div>
+          {isDirectory(entry) && <FolderUsage hostId={hostId} path={path} />}
           <button className="secondary block" onClick={() => setPermissions(true)}>
             Permissions
           </button>
@@ -347,6 +348,51 @@ function EntrySheet({
       )}
     </Sheet>
   )
+}
+
+/**
+ * FolderUsage is the line a listing cannot give a folder: what is under it, all
+ * the way down, and how much disk that takes. It is counted when the sheet
+ * opens rather than with the listing, because a walk over every entry in a
+ * tree is work worth doing for the one folder someone is looking at and not
+ * for the forty they scrolled past.
+ */
+function FolderUsage({ hostId, path }: { hostId: number; path: string }) {
+  const { data: usage, error, offline } = useLoader(() => api.usage(hostId, path), [hostId, path])
+  if (offline) return null
+  if (error) {
+    return (
+      <p className="sub" style={{ marginTop: -4, marginBottom: 12 }}>
+        Could not measure it: {error}
+      </p>
+    )
+  }
+  if (!usage) {
+    return (
+      <p className="sub" style={{ marginTop: -4, marginBottom: 12 }}>
+        Measuring…
+      </p>
+    )
+  }
+  return (
+    <p className="sub" style={{ marginTop: -4, marginBottom: 12 }}>
+      {describeUsage(usage)}
+    </p>
+  )
+}
+
+/** describeUsage is "12 files · 3 folders · 1.2 GB", with a caveat where the
+ *  walk could not see everything. */
+function describeUsage(usage: DirUsage): string {
+  const line = `${plural(usage.files, 'file')} · ${plural(usage.dirs, 'folder')} · ${bytes(usage.bytes)} on disk`
+  if (usage.unreadable > 0) {
+    return `${line} · at least: ${plural(usage.unreadable, 'place')} could not be read`
+  }
+  return line
+}
+
+function plural(n: number, noun: string): string {
+  return `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`
 }
 
 /**

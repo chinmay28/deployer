@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/hosts/{id}/files", s.handleListFiles)
 	mux.HandleFunc("DELETE /api/hosts/{id}/files", s.handleRemoveFile)
+	mux.HandleFunc("GET /api/hosts/{id}/files/usage", s.handleFileUsage)
 	mux.HandleFunc("GET /api/hosts/{id}/files/content", s.handleReadFile)
 	mux.HandleFunc("PUT /api/hosts/{id}/files/content", s.handleWriteFile)
 	mux.HandleFunc("POST /api/hosts/{id}/files/mkdir", s.handleMkdir)

@@ -4,6 +4,7 @@ import type {
   Crontab,
   Deployment,
   DirListing,
+  DirUsage,
   Host,
   HostFile,
   HostProcesses,
@@ -248,6 +249,10 @@ export const api = {
     request<DirListing>(`/api/hosts/${id}/files?path=${encodeURIComponent(path)}`),
   file: (id: number, path: string) =>
     request<HostFile>(`/api/hosts/${id}/files/content?path=${encodeURIComponent(path)}`),
+  /** Counts what is under a directory and how much disk it takes. Walks the
+   *  whole tree on the host, so it can take a while on a big one. */
+  usage: (id: number, path: string) =>
+    request<DirUsage>(`/api/hosts/${id}/files/usage?path=${encodeURIComponent(path)}`),
   saveFile: (id: number, path: string, content: string) =>
     request<HostFile>(`/api/hosts/${id}/files/content`, { method: 'PUT', ...json({ path, content }) }),
   mkdir: (id: number, path: string) =>

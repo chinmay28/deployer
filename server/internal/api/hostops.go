@@ -425,6 +425,33 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, file)
 }
 
+// usageTimeout bounds measuring a directory. Counting a tree is a walk over
+// every entry in it, and on a Pi's SD card a home directory full of photos
+// takes longer than the ordinary limit allows.
+const usageTimeout = 3 * time.Minute
+
+// handleFileUsage counts what is under a directory and how much disk it takes.
+func (s *Server) handleFileUsage(w http.ResponseWriter, r *http.Request) {
+	h, err := s.hostFromPath(r)
+	if err != nil {
+		s.writeStoreError(w, err, "measure directory")
+		return
+	}
+	path, ok := queryPath(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), usageTimeout)
+	defer cancel()
+
+	usage, err := s.Ops.Usage(ctx, h, path)
+	if err != nil {
+		s.writeOpError(w, err, "measure directory")
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
+}
+
 type writeFileInput struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
