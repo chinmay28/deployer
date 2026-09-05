@@ -664,3 +664,111 @@ export interface SSHKeyInfo {
   authorizeCommand: string
   sudoCommand: string
 }
+
+/** Claude Code on a host, for the SSH user: whether it is there, whether that
+ *  user is signed in, and how far an install or a sign-in has got. */
+export interface ClaudeHost {
+  user: string
+  home: string
+  installed: boolean
+  version?: string
+  path?: string
+  arch?: string
+  os?: string
+  /** The install Deployer started, if it started one. */
+  install: 'absent' | 'running' | 'failed' | 'done'
+  installExit?: number
+  installLog?: string
+  signedIn: boolean
+  /** How: a Claude account, or an API key. */
+  auth?: 'oauth' | 'api_key' | ''
+  account?: string
+  plan?: string
+  /** The sign-in Deployer started. "waiting" means the link is ready and a
+   *  code is what it needs. */
+  login: 'absent' | 'waiting' | 'running' | 'failed' | 'done'
+  loginUrl?: string
+  loginExit?: number
+  loginLog?: string
+  /** Installed and signed in: a session could start now. */
+  ready: boolean
+}
+
+export type ClaudeMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
+
+/** One conversation with Claude Code on a host. It lives on Deployer, so it
+ *  outlives the screen looking at it. */
+export interface ClaudeSession {
+  id: string
+  hostId: number
+  user: string
+  name: string
+  dir: string
+  /** As the CLI reports them; an alias asked for at the start comes back as
+   *  the model it resolved to. */
+  model: string
+  mode: ClaudeMode | string
+  cliSessionId: string
+  startedAt: string
+  /** How many events the session has produced; a reconnecting screen asks the
+   *  stream to start here. */
+  offset: number
+  running: boolean
+  /** Claude is working on a turn. */
+  busy: boolean
+  /** Permission requests waiting for an answer. */
+  pending: number
+  exit: string
+  watchers: number
+  cost: number
+  turns: number
+  context: number
+  contextWindow: number
+}
+
+/** One piece of something Claude said. */
+export interface ClaudeBlock {
+  type: 'text' | 'thinking' | 'tool_use'
+  text?: string
+  id?: string
+  name?: string
+  input?: unknown
+}
+
+/** One event in a session's history. Which fields are set depends on kind. */
+export interface ClaudeEntry {
+  seq: number
+  at: string
+  kind:
+    | 'init'
+    | 'assistant'
+    | 'tool_result'
+    | 'permission'
+    | 'permission_cancelled'
+    | 'result'
+    | 'notice'
+    | 'user'
+    | 'answered'
+    | 'model'
+    | 'mode'
+    | 'exit'
+  model?: string
+  mode?: string
+  cwd?: string
+  blocks?: ClaudeBlock[]
+  context?: number
+  toolUseId?: string
+  content?: string
+  isError?: boolean
+  requestId?: string
+  toolName?: string
+  input?: unknown
+  description?: string
+  behavior?: 'allow' | 'deny'
+  cost?: number
+  turns?: number
+  durationMs?: number
+  contextWindow?: number
+  text?: string
+  subtype?: string
+}

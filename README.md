@@ -618,6 +618,51 @@ A shell is the general answer and usually not the quickest one, so it is the
 last of the three ways in rather than the first: a config is fewer taps in
 **Files**, and restarting something is one tap in **Services**.
 
+**Claude** is Claude Code on the host, driven from a chat. Say what you want
+done on the machine and watch it be done: the commands it runs, the files it
+changes, and the questions it asks along the way appear as cards, and the
+answer to a question is a button. It is the Terminal's other half — the same
+machine, the same user, the same `sudo` — for the jobs where typing the
+commands is the slow part.
+
+**Getting it there happens once, on this screen.** Deployer installs the CLI
+for the SSH user with Anthropic's own installer — into `~/.local/bin`, with no
+sudo and nothing system-wide, and it keeps itself up to date from there. The
+sign-in belongs to the host: `claude auth login` prints a link and waits for a
+code, the phone is what opens the link, and the code the phone is shown goes
+back through Deployer to the process waiting for it. The token the CLI ends up
+with is written by the CLI into the user's home directory; Deployer never
+reads it, never stores it, and never sends it anywhere. An API key is the
+alternative, written into the CLI's own settings file on the host and forgotten
+here. Both take longer than a request — a download onto a Pi, a person with a
+phone — so both run detached on the host, and the screen follows the log.
+
+**A session belongs to Deployer, not to the screen looking at it**, exactly as
+a shell does. It is one `claude` process on the host, started over SSH in
+print mode with its standard streams held open, speaking the CLI's own
+line-per-message protocol; everything it says is kept as a numbered log of
+events, and a phone that comes back asks for the events it missed. Leaving
+the screen keeps the session open; coming back rejoins it with the whole
+conversation; a second phone sees the same one. Left alone with nothing
+running it closes after an hour, and a session Claude is still working in is
+left alone until it is finished.
+
+**Permission prompts are cards in the chat, not a modal.** In its default mode
+the CLI asks before running a command or changing a file, and the question
+arrives here with the exact command on it and three answers: allow, allow for
+the rest of the session, deny. Two phones watching the same session both see
+the question, and the one that answers settles it for both. **Skip all** is
+the CLI's `--dangerously-skip-permissions`, chosen when a session starts and
+never the default; a session running that way wears a red stripe the whole way
+through, so there is no moment at which it reads like an ordinary one. The
+model and the permission mode can both be changed mid-conversation, and the
+CLI's acknowledgement is what the screen waits for before saying so.
+
+**The conversation is the CLI's, so it survives Deployer.** Each session has a
+CLI session id, and `claude --resume` on the host picks the same conversation
+up in a terminal — which is also the way back in after Deployer has been
+restarted, since the process itself dies with it.
+
 **Scheduled jobs** edits the crontab, the whole file at once, the way
 `crontab -e` does — for the user Deployer signs in as, and for root. Cron is
 what validates it: a crontab it refuses to parse is not installed, the old one
@@ -898,6 +943,22 @@ Quoting is tested the same way — every path a person could type is handed to
 | `GET`    | `/api/shell/{sid}/stream`           | the screen as server-sent events, `?from=` a byte offset to resume |
 | `POST`   | `/api/shell/{sid}/input`            | keystrokes, base64 — a shell's most important keys are not text |
 | `POST`   | `/api/shell/{sid}/resize`           | tell the pty its window changed      |
+| `GET`    | `/api/hosts/{id}/claude`            | Claude Code for the SSH user: installed, signed in, and how an install or sign-in is going |
+| `POST`   | `/api/hosts/{id}/claude/install`    | install the CLI for that user, detached; the status follows the log |
+| `POST`   | `/api/hosts/{id}/claude/login`      | start a sign-in, `{"console"}`; the link appears in the status once printed |
+| `POST`   | `/api/hosts/{id}/claude/login/code` | hand the waiting sign-in its code, `{"code"}` |
+| `DELETE` | `/api/hosts/{id}/claude/login`      | cancel a waiting sign-in             |
+| `POST`   | `/api/hosts/{id}/claude/key`        | store an API key in the CLI's settings, `{"key"}` |
+| `GET`    | `/api/hosts/{id}/claude/sessions`   | the conversations open on this host  |
+| `POST`   | `/api/hosts/{id}/claude/sessions`   | start one, `{"dir","model","mode","name"}` |
+| `GET`    | `/api/claude/{sid}`                 | one session: model, mode, busy, pending questions, cost |
+| `DELETE` | `/api/claude/{sid}`                 | end it                               |
+| `GET`    | `/api/claude/{sid}/stream`          | the conversation as server-sent events, `?from=` an event number to resume |
+| `POST`   | `/api/claude/{sid}/message`         | say something, `{"text"}`            |
+| `POST`   | `/api/claude/{sid}/answer`          | answer a permission request, `{"requestId","allow","always","reason"}` |
+| `POST`   | `/api/claude/{sid}/model`           | change the model, `{"model"}`; waits for the CLI to accept |
+| `POST`   | `/api/claude/{sid}/mode`            | change the permission mode, `{"mode"}` |
+| `POST`   | `/api/claude/{sid}/interrupt`       | stop what Claude is doing            |
 | `GET`    | `/api/hosts/{id}/remote`            | the host's browser session: what is installed, how far a setup got, whether it is running, and what has been downloaded |
 | `POST`   | `/api/hosts/{id}/remote`            | install or reconfigure it; the packages install detached |
 | `DELETE` | `/api/hosts/{id}/remote`            | remove it, `?purge=true` to delete the browser profile too |
@@ -946,6 +1007,10 @@ server/
                      the remote browser session, the torrent downloader, and
                      guessing why it last restarted
   internal/shell/    login shells held open between visits, and their scrollback
+  internal/claudecli/ the Claude Code CLI's streaming protocol: the command line,
+                     what goes in, and what comes out as events
+  internal/claude/   conversations with Claude Code held open between visits:
+                     the event log, permission questions, model and mode changes
   internal/selfhost/ recognising this machine, and the app that updates it
   internal/deploy/   command rendering, the deployment runner, health checks
   internal/api/      REST handlers, SSE log stream, optional PIN gate

@@ -1,6 +1,8 @@
 import type {
   App,
   BootReport,
+  ClaudeHost,
+  ClaudeSession,
   Crontab,
   Deployment,
   DirListing,
@@ -117,6 +119,36 @@ export const api = {
   /** The browser running on the host: what is installed, how far a setup got,
    *  whether it is up, and what has been downloaded. Nothing here writes, so
    *  the screen watching an install is free to ask again on a timer. */
+  /** Claude Code on a host: installed, signed in, or on the way to either. */
+  claude: (id: number) => request<ClaudeHost>(`/api/hosts/${id}/claude`),
+  installClaude: (id: number) =>
+    request<ClaudeHost>(`/api/hosts/${id}/claude/install`, { method: 'POST' }),
+  /** Starts a sign-in on the host. The link to open comes back in the status
+   *  once the CLI has printed it. */
+  claudeLogin: (id: number, console = false) =>
+    request<ClaudeHost>(`/api/hosts/${id}/claude/login`, { method: 'POST', ...json({ console }) }),
+  claudeLoginCode: (id: number, code: string) =>
+    request<ClaudeHost>(`/api/hosts/${id}/claude/login/code`, { method: 'POST', ...json({ code }) }),
+  cancelClaudeLogin: (id: number) =>
+    request<ClaudeHost>(`/api/hosts/${id}/claude/login`, { method: 'DELETE' }),
+  claudeKey: (id: number, key: string) =>
+    request<ClaudeHost>(`/api/hosts/${id}/claude/key`, { method: 'POST', ...json({ key }) }),
+  claudeSessions: (id: number) => request<ClaudeSession[]>(`/api/hosts/${id}/claude/sessions`),
+  openClaude: (id: number, input: { dir: string; model: string; mode: string; name?: string }) =>
+    request<ClaudeSession>(`/api/hosts/${id}/claude/sessions`, { method: 'POST', ...json(input) }),
+  claudeSession: (sid: string) => request<ClaudeSession>(`/api/claude/${sid}`),
+  closeClaude: (sid: string) => request<void>(`/api/claude/${sid}`, { method: 'DELETE' }),
+  claudeSay: (sid: string, text: string) =>
+    request<ClaudeSession>(`/api/claude/${sid}/message`, { method: 'POST', ...json({ text }) }),
+  claudeAnswer: (sid: string, input: { requestId: string; allow: boolean; always?: boolean; reason?: string }) =>
+    request<ClaudeSession>(`/api/claude/${sid}/answer`, { method: 'POST', ...json(input) }),
+  claudeModel: (sid: string, model: string) =>
+    request<ClaudeSession>(`/api/claude/${sid}/model`, { method: 'POST', ...json({ model }) }),
+  claudeMode: (sid: string, mode: string) =>
+    request<ClaudeSession>(`/api/claude/${sid}/mode`, { method: 'POST', ...json({ mode }) }),
+  claudeInterrupt: (sid: string) =>
+    request<ClaudeSession>(`/api/claude/${sid}/interrupt`, { method: 'POST' }),
+
   remote: (id: number) => request<RemoteSession>(`/api/hosts/${id}/remote`),
   /** Installs the session and starts the packages installing, which the host
    *  gets on with by itself. Idempotent, and it keeps the password and the
