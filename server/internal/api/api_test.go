@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chinmay28/deployer/server/internal/claude"
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
@@ -44,6 +45,7 @@ func testServer(t *testing.T, pin string) (*Server, http.Handler) {
 		Health: health,
 		Ops:    hostops.NewService(svc),
 		Shells: shell.NewManager(svc, log),
+		Claude: claude.NewManager(svc, log),
 		Log:    log,
 		Auth:   NewPinAuth(pin),
 	}

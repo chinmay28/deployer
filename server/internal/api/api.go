@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/chinmay28/deployer/server/internal/claude"
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
@@ -33,6 +34,9 @@ type Server struct {
 	// Shells holds the login shells open on hosts. They outlive the requests
 	// that made them, which is why they live on the server and not in a handler.
 	Shells *shell.Manager
+	// Claude holds the Claude Code sessions open on hosts, which outlive
+	// their screens the way shells do.
+	Claude *claude.Manager
 	Log    *slog.Logger
 	// Self identifies the machine Deployer runs on; nil disables self-update.
 	Self SelfManager
@@ -88,6 +92,26 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/shell/{sid}/stream", s.handleShellStream)
 	mux.HandleFunc("POST /api/shell/{sid}/input", s.handleShellInput)
 	mux.HandleFunc("POST /api/shell/{sid}/resize", s.handleShellResize)
+
+	// Claude Code on a host: getting it there is host administration under
+	// the host, and a conversation is a session addressed by its own id, for
+	// the same reason a shell is.
+	mux.HandleFunc("GET /api/hosts/{id}/claude", s.handleClaudeStatus)
+	mux.HandleFunc("POST /api/hosts/{id}/claude/install", s.handleClaudeInstall)
+	mux.HandleFunc("POST /api/hosts/{id}/claude/login", s.handleClaudeLogin)
+	mux.HandleFunc("POST /api/hosts/{id}/claude/login/code", s.handleClaudeLoginCode)
+	mux.HandleFunc("DELETE /api/hosts/{id}/claude/login", s.handleClaudeCancelLogin)
+	mux.HandleFunc("POST /api/hosts/{id}/claude/key", s.handleClaudeKey)
+	mux.HandleFunc("GET /api/hosts/{id}/claude/sessions", s.handleListClaudeSessions)
+	mux.HandleFunc("POST /api/hosts/{id}/claude/sessions", s.handleOpenClaudeSession)
+	mux.HandleFunc("GET /api/claude/{sid}", s.handleGetClaudeSession)
+	mux.HandleFunc("DELETE /api/claude/{sid}", s.handleCloseClaudeSession)
+	mux.HandleFunc("GET /api/claude/{sid}/stream", s.handleClaudeStream)
+	mux.HandleFunc("POST /api/claude/{sid}/message", s.handleClaudeMessage)
+	mux.HandleFunc("POST /api/claude/{sid}/answer", s.handleClaudeAnswer)
+	mux.HandleFunc("POST /api/claude/{sid}/model", s.handleClaudeModel)
+	mux.HandleFunc("POST /api/claude/{sid}/mode", s.handleClaudeMode)
+	mux.HandleFunc("POST /api/claude/{sid}/interrupt", s.handleClaudeInterrupt)
 
 	mux.HandleFunc("GET /api/hosts/{id}/remote", s.handleRemoteSession)
 	mux.HandleFunc("POST /api/hosts/{id}/remote", s.handleRemoteSetup)

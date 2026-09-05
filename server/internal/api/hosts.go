@@ -143,6 +143,7 @@ func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
 	// admits to knowing.
 	s.Hosts.Forget(id)
 	s.Shells.CloseHost(id)
+	s.Claude.CloseHost(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

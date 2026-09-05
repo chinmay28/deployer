@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chinmay28/deployer/server/internal/api"
+	"github.com/chinmay28/deployer/server/internal/claude"
 	"github.com/chinmay28/deployer/server/internal/deploy"
 	"github.com/chinmay28/deployer/server/internal/hostops"
 	"github.com/chinmay28/deployer/server/internal/hosts"
@@ -93,6 +94,10 @@ func run() error {
 	// made them and are reaped on their own clock.
 	shells := shell.NewManager(hostSvc, log)
 	go shells.Run(ctx)
+	// Conversations with Claude Code are held open the same way, on a longer
+	// clock.
+	claudeSessions := claude.NewManager(hostSvc, log)
+	go claudeSessions.Run(ctx)
 
 	health := deploy.NewChecker(db, hostSvc, log)
 	go health.Run(ctx)
@@ -105,7 +110,7 @@ func run() error {
 
 	apiSrv := &api.Server{
 		DB: db, Hosts: hostSvc, Poller: poller,
-		Runner: runner, Health: health, Ops: hostops.NewService(hostSvc), Shells: shells,
+		Runner: runner, Health: health, Ops: hostops.NewService(hostSvc), Shells: shells, Claude: claudeSessions,
 		Log: log, Auth: auth,
 		Self: self, Version: appVersion(), SelfRef: *ref,
 	}
