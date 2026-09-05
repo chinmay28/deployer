@@ -6,6 +6,7 @@ import AppDetail from './pages/AppDetail'
 import Apps from './pages/Apps'
 import DeploymentDetail from './pages/DeploymentDetail'
 import HostBoot from './pages/HostBoot'
+import HostClaude from './pages/HostClaude'
 import HostCron from './pages/HostCron'
 import HostDetail from './pages/HostDetail'
 import HostFile from './pages/HostFile'
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/hosts/:id/service" element={<HostService />} />
         <Route path="/hosts/:id/service/new" element={<HostServiceNew />} />
         <Route path="/hosts/:id/shell" element={<HostShell />} />
+        <Route path="/hosts/:id/claude" element={<HostClaude />} />
         <Route path="/hosts/:id/torrents" element={<HostTorrents />} />
         <Route path="/apps" element={<Apps />} />
         <Route path="/apps/new" element={<AppForm />} />

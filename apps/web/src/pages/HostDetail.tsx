@@ -350,6 +350,20 @@ export default function HostDetail() {
               <span className="chevron">›</span>
             </div>
           </Link>
+          {/* After the terminal because it is the terminal's other half: the
+              same machine, the same user, and instead of typing the commands
+              you say what you want and watch them be typed. */}
+          <Link className="card" to={`/hosts/${hostId}/claude`}>
+            <div className="row between">
+              <div className="grow">
+                <div className="title">Claude</div>
+                <div className="sub">
+                  Tell Claude Code what you want done on {host.name}, and watch it do it
+                </div>
+              </div>
+              <span className="chevron">›</span>
+            </div>
+          </Link>
           {/* Between the file browser and the crontab because it is the third
               answer to "I need to do something on that machine": some things
               can only be done by a person in front of a browser, and the file
