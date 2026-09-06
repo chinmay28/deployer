@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
 import { Sender, ShellStream, type ConnectionState } from '../lib/shell'
+import { followVisualViewport } from '../lib/viewport'
 import type { ShellSession } from '../types'
 import { Sheet } from './ui'
 
@@ -515,26 +516,13 @@ export default function TerminalView({
   // The soft keyboard covers the bottom half of the screen. Sizing to the
   // visual viewport is what keeps the prompt above it instead of behind it.
   useEffect(() => {
-    const vv = window.visualViewport
-    if (!vv) return
     const root = document.querySelector<HTMLElement>('.term-screen')
     if (!root) return
-    const apply = () => {
-      root.style.height = `${vv.height}px`
-      root.style.transform = `translateY(${vv.offsetTop}px)`
+    return followVisualViewport(root, (vv) => {
       // Anything that takes a third of the window is the keyboard; browser
       // chrome coming and going is far smaller.
       setKbOpen(window.innerHeight - vv.height > 140)
-    }
-    apply()
-    vv.addEventListener('resize', apply)
-    vv.addEventListener('scroll', apply)
-    return () => {
-      vv.removeEventListener('resize', apply)
-      vv.removeEventListener('scroll', apply)
-      root.style.height = ''
-      root.style.transform = ''
-    }
+    })
   }, [])
 
   useEffect(() => {

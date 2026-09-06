@@ -796,6 +796,10 @@ button.block {
 
 /* ---------- sheet ---------- */
 
+/* The scrim covers the visible screen, not the layout viewport: Sheet sizes
+   and shifts it from visualViewport, because on iOS the two part ways under
+   the keyboard and on a locked page, and a sheet resting on the layout
+   viewport's bottom edge then hangs below the screen. */
 .scrim {
   position: fixed;
   inset: 0;
@@ -810,8 +814,10 @@ button.block {
 .sheet {
   width: 100%;
   max-width: 720px;
-  max-height: 88vh;
+  max-height: 88%;
   overflow-y: auto;
+  /* Reaching the end of the sheet must not carry the scroll on to the page. */
+  overscroll-behavior: contain;
   background: var(--surface);
   border-radius: 20px 20px 0 0;
   padding: 8px 16px calc(env(safe-area-inset-bottom) + 20px);

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { ApiError } from '../api'
 import { percent, severity } from '../lib/format'
+import { followVisualViewport, holdPageStill } from '../lib/viewport'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`card ${className}`}>{children}</div>
@@ -121,7 +123,14 @@ export function Banner({ tone, children }: { tone: 'good' | 'bad' | 'warn'; chil
   return <div className={`banner ${tone}`}>{children}</div>
 }
 
-/** Sheet is the bottom-sheet modal used for confirmations and forms. */
+/** Sheet is the bottom-sheet modal used for confirmations and forms. It is
+ * portalled to the body so no ancestor's transform or filter can capture it,
+ * and its scrim is sized to the visual viewport so the sheet rests on the
+ * bottom of the screen — on iOS a fixed box left to `bottom: 0` follows the
+ * layout viewport, which the keyboard and a locked, scrolled page both leave
+ * hanging below the screen. The page behind is held still by intercepting the
+ * gestures rather than by `overflow: hidden` on the body, which is what set
+ * that drift off in the first place. */
 export function Sheet({
   title,
   subtitle,
@@ -133,27 +142,35 @@ export function Sheet({
   onClose: () => void
   children: ReactNode
 }) {
+  const scrim = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     document.addEventListener('keydown', onKey)
-    // Stop the page behind the sheet from scrolling on iOS.
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = previous
-    }
+    return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  return (
-    <div className="scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+  useEffect(() => {
+    if (!scrim.current || !panel.current) return
+    const unfollow = followVisualViewport(scrim.current)
+    const release = holdPageStill(scrim.current, panel.current)
+    return () => {
+      unfollow()
+      release()
+    }
+  }, [])
+
+  return createPortal(
+    <div ref={scrim} className="scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={panel} className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="grabber" />
         <h2>{title}</h2>
         {subtitle && <p className="sub" style={{ marginTop: 0 }}>{subtitle}</p>}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
