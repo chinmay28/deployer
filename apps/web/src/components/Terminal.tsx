@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
+import { toClipboard } from '../lib/clipboard'
 import { Sender, ShellStream, type ConnectionState } from '../lib/shell'
 import type { ShellSession } from '../types'
 import { Sheet } from './ui'
@@ -617,6 +618,11 @@ export default function TerminalView({
     const text = term.getSelection()
     term.clearSelection()
     setSelecting(false)
+    // A pick over blank lines would "copy" nothing and say it had.
+    if (!text.trim()) {
+      say('Nothing on those lines to copy', 1600)
+      return
+    }
     if (await toClipboard(text)) {
       say(`Copied ${count(text)}`, 1600)
       term.focus()
@@ -926,46 +932,6 @@ function controlCode(ch: string): number | null {
     '?': 127,
   }
   return c in others ? others[c] : null
-}
-
-/**
- * Text to the clipboard, by whichever of the two ways is open.
- *
- * The modern one needs a page the browser trusts — https or localhost — and
- * Deployer is usually neither. The old one is a hidden box, a selection and a
- * command, and it still works on a plain http page because a tap on Copy is a
- * gesture the browser watched happen. Returns false when neither did, which is
- * where the box the user can see comes in.
- */
-async function toClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    // Refused. The old way may still be allowed.
-  }
-  const box = document.createElement('textarea')
-  box.value = text
-  // Not readonly and editable: iOS refuses to select the contents of a field
-  // it thinks cannot be edited, and a selection is what there is to copy.
-  box.contentEditable = 'true'
-  box.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0'
-  document.body.appendChild(box)
-  try {
-    const range = document.createRange()
-    range.selectNodeContents(box)
-    const selection = window.getSelection()
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    box.setSelectionRange(0, text.length)
-    return document.execCommand('copy')
-  } catch {
-    return false
-  } finally {
-    box.remove()
-  }
 }
 
 /** How much was copied, said the way a person would. */

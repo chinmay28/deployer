@@ -812,6 +812,7 @@ it accordingly:
 make build          # PWA into the Go embed directory, then the binary
 make run            # build and start on :8899
 make test           # Go tests, including SSH integration tests where sshd exists
+make test-web       # the PWA's unit tests
 make test-installer # install, upgrade, rollback and uninstall, in a sandbox
 make test-provision # set a host up over SSH for real (root; changes the machine)
 make test-torrent   # drive a real deluge: add, pause and remove a torrent
