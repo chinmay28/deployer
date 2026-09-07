@@ -11,7 +11,7 @@ VERSION_PKG := github.com/chinmay28/deployer/server/internal/version
 PATCH := $(shell node scripts/version.mjs --patch 2>/dev/null)
 LDFLAGS := -s -w $(if $(PATCH),-X $(VERSION_PKG).Patch=$(PATCH))
 
-.PHONY: build server web test test-installer test-provision test-torrent vet run clean version bump-version
+.PHONY: build server web test test-web test-installer test-provision test-torrent vet run clean version bump-version
 
 ## build: PWA into the embed directory, then the single binary
 build: web server
@@ -44,6 +44,10 @@ web:
 
 test:
 	cd server && $(GO) test ./...
+
+## test-web: the PWA's unit tests (needs node; installs apps/web's dependencies)
+test-web:
+	cd apps/web && npm ci && npm test
 
 ## test-installer: install, upgrade, rollback and uninstall in a sandbox (needs root)
 test-installer:
